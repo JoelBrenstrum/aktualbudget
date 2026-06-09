@@ -1,73 +1,74 @@
-# React + TypeScript + Vite
+# Aktual Budget Sync
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Automatically sync your New Zealand bank transactions into [Actual Budget](https://actualbudget.org) via [Akahu](https://www.akahu.nz) — the open banking API for NZ.
 
-Currently, two official plugins are available:
+If you self-host Actual Budget and bank in New Zealand, this app bridges the gap. Akahu connects to your NZ banks (ASB, ANZ, BNZ, Kiwibank, etc.) and exposes your transactions through an API. This app pulls those transactions and imports them into your Actual Budget accounts on a schedule, so you don't have to manually enter or upload anything.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+![Screenshot](docs/screenshot.png)
 
-## React Compiler
+## Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Connect** to your Actual Budget server and Akahu account with a simple UI
+- **Map accounts** — link each Actual Budget account to its Akahu counterpart via dropdown selectors
+- **Sync transactions** — pull transactions from Akahu and import them into Actual Budget with a single click
+- **Scheduled sync** — set it to auto-sync every 1, 6, or 12 hours, or daily
+- **Deduplication** — uses Akahu's transaction ID as Actual's `imported_id` so transactions are never double-imported
+- **Per-account sync history** — see how many transactions were imported/updated per account per sync
 
-## Expanding the ESLint configuration
+## Prerequisites
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+- A self-hosted [Actual Budget](https://actualbudget.org) server
+- An [Akahu](https://www.akahu.nz) personal app with API tokens ([developer docs](https://developers.akahu.nz))
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Quick Start (Docker)
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+docker run -d \
+  -p 3001:3001 \
+  -v ./data:/app/data \
+  ghcr.io/joelbrenstrum/aktualbudget:latest
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Then open **http://localhost:3001**.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Or with Docker Compose:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+git clone https://github.com/JoelBrenstrum/aktualbudget.git
+cd aktualbudget
+docker compose up -d
 ```
+
+## Development
+
+```bash
+npm install
+npm run dev
+```
+
+This starts the Vite frontend on `:5173` and the Express backend on `:3001` concurrently.
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start frontend + backend in dev mode |
+| `npm run build` | Build frontend for production |
+| `npm run docker` | Build and start Docker container |
+| `npm run docker:stop` | Stop Docker container |
+
+## How It Works
+
+1. **Connections** — Enter your Actual Budget server URL, sync ID, and password. Enter your Akahu app and user tokens. Test both connections.
+2. **Account Mapping** — Select which Actual Budget account maps to which Akahu account.
+3. **Sync** — Click "Sync Now" or enable a schedule. The app fetches transactions from Akahu, converts amounts to cents, and imports them into Actual Budget using `imported_id` for deduplication.
+
+## Tech Stack
+
+- **Frontend**: React, TypeScript, Vite, shadcn/ui, Tailwind CSS v4
+- **Backend**: Express, TypeScript, tsx
+- **Sync**: @actual-app/api, Akahu REST API, node-cron
+
+## License
+
+MIT
