@@ -10,12 +10,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, CheckCircle2, XCircle, ArrowRight } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import type { AppConfig, ActualAccount, AkahuAccount } from "../App";
 
 interface Props {
   config: AppConfig;
+  actualAccounts: ActualAccount[];
+  akahuAccounts: AkahuAccount[];
   onSave: (updates: Partial<AppConfig>) => Promise<void>;
   onActualAccountsLoaded: (accounts: ActualAccount[]) => void;
   onAkahuAccountsLoaded: (accounts: AkahuAccount[]) => void;
@@ -24,6 +26,8 @@ interface Props {
 
 export function ConnectionSettings({
   config,
+  actualAccounts,
+  akahuAccounts,
   onSave,
   onActualAccountsLoaded,
   onAkahuAccountsLoaded,
@@ -39,8 +43,8 @@ export function ConnectionSettings({
   const [actualTesting, setActualTesting] = useState(false);
   const [actualStatus, setActualStatus] = useState<
     "idle" | "success" | "error"
-  >("idle");
-  const [actualAccountCount, setActualAccountCount] = useState(0);
+  >(actualAccounts.length > 0 ? "success" : "idle");
+  const [actualAccountCount, setActualAccountCount] = useState(actualAccounts.length);
 
   // Akahu form state
   const [akahuAppToken, setAkahuAppToken] = useState(config.akahu.appToken);
@@ -48,8 +52,10 @@ export function ConnectionSettings({
   const [akahuTesting, setAkahuTesting] = useState(false);
   const [akahuStatus, setAkahuStatus] = useState<
     "idle" | "success" | "error"
-  >("idle");
-  const [akahuAccountCount, setAkahuAccountCount] = useState(0);
+  >(akahuAccounts.length > 0 ? "success" : "idle");
+  const [akahuAccountCount, setAkahuAccountCount] = useState(akahuAccounts.length);
+
+  const [showSecrets, setShowSecrets] = useState(false);
 
   const testActual = async () => {
     setActualTesting(true);
@@ -185,26 +191,48 @@ export function ConnectionSettings({
             </div>
             <div className="space-y-2">
               <Label htmlFor="actual-password">Password</Label>
-              <Input
-                id="actual-password"
-                type="password"
-                placeholder="Server password"
-                value={actualPassword}
-                onChange={(e) => setActualPassword(e.target.value)}
-              />
+              <div className="relative">
+                <Input
+                  id="actual-password"
+                  type={showSecrets ? "text" : "password"}
+                  placeholder="Server password"
+                  value={actualPassword}
+                  onChange={(e) => setActualPassword(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                >
+                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="actual-enc-password">
                 Encryption Password{" "}
                 <span className="text-muted-foreground">(optional)</span>
               </Label>
-              <Input
-                id="actual-enc-password"
-                type="password"
-                placeholder="Only if database is encrypted"
-                value={actualEncPassword}
-                onChange={(e) => setActualEncPassword(e.target.value)}
-              />
+              <div className="relative">
+                <Input
+                  id="actual-enc-password"
+                  type={showSecrets ? "text" : "password"}
+                  placeholder="Only if database is encrypted"
+                  value={actualEncPassword}
+                  onChange={(e) => setActualEncPassword(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                >
+                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
             <Button
               type="button"
@@ -245,23 +273,45 @@ export function ConnectionSettings({
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="akahu-app-token">App Token</Label>
-              <Input
-                id="akahu-app-token"
-                type="password"
-                placeholder="app_token_..."
-                value={akahuAppToken}
-                onChange={(e) => setAkahuAppToken(e.target.value)}
-              />
+              <div className="relative">
+                <Input
+                  id="akahu-app-token"
+                  type={showSecrets ? "text" : "password"}
+                  placeholder="app_token_..."
+                  value={akahuAppToken}
+                  onChange={(e) => setAkahuAppToken(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                >
+                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="akahu-user-token">User Token</Label>
-              <Input
-                id="akahu-user-token"
-                type="password"
-                placeholder="user_token_..."
-                value={akahuUserToken}
-                onChange={(e) => setAkahuUserToken(e.target.value)}
-              />
+              <div className="relative">
+                <Input
+                  id="akahu-user-token"
+                  type={showSecrets ? "text" : "password"}
+                  placeholder="user_token_..."
+                  value={akahuUserToken}
+                  onChange={(e) => setAkahuUserToken(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                >
+                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
             </div>
             <Button
               type="button"
@@ -278,13 +328,11 @@ export function ConnectionSettings({
         </Card>
       </div>
 
-      {bothConnected && (
-        <div className="flex justify-end">
-          <Button onClick={onNext} className="gap-2">
-            Map Accounts <ArrowRight className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+      <div className="flex justify-end">
+        <Button onClick={onNext} disabled={!bothConnected} className="gap-2">
+          Map Accounts <ArrowRight className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
   );
 }

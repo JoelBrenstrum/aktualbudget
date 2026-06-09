@@ -134,6 +134,8 @@ function App() {
           <TabsContent value="connections">
             <ConnectionSettings
               config={config}
+              actualAccounts={actualAccounts}
+              akahuAccounts={akahuAccounts}
               onSave={saveConfig}
               onActualAccountsLoaded={setActualAccounts}
               onAkahuAccountsLoaded={setAkahuAccounts}

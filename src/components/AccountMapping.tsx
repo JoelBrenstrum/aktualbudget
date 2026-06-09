@@ -44,6 +44,8 @@ export function AccountMapping({
     config.accountMappings
   );
 
+  const [savedMappings, setSavedMappings] = useState(config.accountMappings);
+
   const addMapping = () => {
     setMappings([
       ...mappings,
@@ -94,7 +96,16 @@ export function AccountMapping({
     }
     await onSave({ accountMappings: valid });
     setMappings(valid);
+    setSavedMappings(valid);
   };
+
+  const saveAndContinue = async () => {
+    await saveMappings();
+    onNext();
+  };
+
+  const validMappings = mappings.filter((m) => m.actualAccountId && m.akahuAccountId);
+  const isDirty = JSON.stringify(validMappings) !== JSON.stringify(savedMappings);
 
   const noAccounts =
     actualAccounts.length === 0 || akahuAccounts.length === 0;
@@ -149,7 +160,9 @@ export function AccountMapping({
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {actualAccounts.map((a) => (
+                          {actualAccounts
+                            .filter((a) => a.id === mapping.actualAccountId || !mappings.some((m, i) => i !== index && m.actualAccountId === a.id))
+                            .map((a) => (
                             <SelectItem key={a.id} value={a.id}>
                               {a.name}
                               {a.type ? (
@@ -181,7 +194,9 @@ export function AccountMapping({
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {akahuAccounts.map((a) => (
+                          {akahuAccounts
+                            .filter((a) => a.id === mapping.akahuAccountId || !mappings.some((m, i) => i !== index && m.akahuAccountId === a.id))
+                            .map((a) => (
                             <SelectItem key={a.id} value={a.id}>
                               {a.name}
                               {a.connection ? (
@@ -221,25 +236,19 @@ export function AccountMapping({
 
       <div className="flex justify-between">
         <Button
+          variant="outline"
           onClick={saveMappings}
-          disabled={
-            noAccounts ||
-            mappings.filter((m) => m.actualAccountId && m.akahuAccountId)
-              .length === 0
-          }
+          disabled={noAccounts || validMappings.length === 0 || !isDirty}
         >
-          Save Mappings
+          Save
         </Button>
         <Button
-          variant="outline"
-          onClick={onNext}
-          disabled={
-            mappings.filter((m) => m.actualAccountId && m.akahuAccountId)
-              .length === 0
-          }
+          onClick={isDirty ? saveAndContinue : onNext}
+          disabled={noAccounts || validMappings.length === 0}
           className="gap-2"
         >
-          Continue to Sync <ArrowRight className="h-4 w-4" />
+          {isDirty ? "Save & Continue to Sync" : "Continue to Sync"}
+          <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
     </div>

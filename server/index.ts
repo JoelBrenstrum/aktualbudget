@@ -21,44 +21,23 @@ app.use(express.static(distPath));
 
 app.get("/api/config", (_req, res) => {
   const config = loadConfig();
-  // Redact sensitive fields for the frontend
-  res.json({
-    actual: {
-      serverUrl: config.actual.serverUrl,
-      syncId: config.actual.syncId,
-      password: config.actual.password ? "••••••••" : "",
-      encryptionPassword: config.actual.encryptionPassword ? "••••••••" : "",
-    },
-    akahu: {
-      appToken: config.akahu.appToken ? "••••••••" : "",
-      userToken: config.akahu.userToken ? "••••••••" : "",
-    },
-    accountMappings: config.accountMappings,
-    schedule: config.schedule,
-    syncHistory: config.syncHistory,
-    cachedActualAccounts: config.cachedActualAccounts,
-    cachedAkahuAccounts: config.cachedAkahuAccounts,
-  });
+  res.json(config);
 });
 
 app.post("/api/config", (req, res) => {
   const current = loadConfig();
   const body = req.body as Partial<AppConfig>;
 
-  // Merge — don't overwrite secrets with redacted placeholders
   if (body.actual) {
     if (body.actual.serverUrl !== undefined) current.actual.serverUrl = body.actual.serverUrl;
     if (body.actual.syncId !== undefined) current.actual.syncId = body.actual.syncId;
-    if (body.actual.password && body.actual.password !== "••••••••")
-      current.actual.password = body.actual.password;
-    if (body.actual.encryptionPassword !== undefined && body.actual.encryptionPassword !== "••••••••")
+    if (body.actual.password !== undefined) current.actual.password = body.actual.password;
+    if (body.actual.encryptionPassword !== undefined)
       current.actual.encryptionPassword = body.actual.encryptionPassword;
   }
   if (body.akahu) {
-    if (body.akahu.appToken && body.akahu.appToken !== "••••••••")
-      current.akahu.appToken = body.akahu.appToken;
-    if (body.akahu.userToken && body.akahu.userToken !== "••••••••")
-      current.akahu.userToken = body.akahu.userToken;
+    if (body.akahu.appToken !== undefined) current.akahu.appToken = body.akahu.appToken;
+    if (body.akahu.userToken !== undefined) current.akahu.userToken = body.akahu.userToken;
   }
   if (body.accountMappings !== undefined) current.accountMappings = body.accountMappings;
   if (body.schedule !== undefined) {
@@ -84,10 +63,8 @@ app.post("/api/actual/test", async (req, res) => {
     actual: {
       serverUrl: body?.serverUrl || config.actual.serverUrl,
       syncId: body?.syncId || config.actual.syncId,
-      password: (body?.password && body.password !== "••••••••") ? body.password : config.actual.password,
-      encryptionPassword: (body?.encryptionPassword && body.encryptionPassword !== "••••••••")
-        ? body.encryptionPassword
-        : config.actual.encryptionPassword,
+      password: body?.password || config.actual.password,
+      encryptionPassword: body?.encryptionPassword ?? config.actual.encryptionPassword,
     },
   };
 
@@ -117,8 +94,8 @@ app.post("/api/akahu/test", async (req, res) => {
   const config = loadConfig();
   const body = req.body as Partial<AppConfig["akahu"]>;
 
-  const appToken = (body?.appToken && body.appToken !== "••••••••") ? body.appToken : config.akahu.appToken;
-  const userToken = (body?.userToken && body.userToken !== "••••••••") ? body.userToken : config.akahu.userToken;
+  const appToken = body?.appToken || config.akahu.appToken;
+  const userToken = body?.userToken || config.akahu.userToken;
 
   try {
     const accounts = await fetchAkahuAccounts(appToken, userToken);
