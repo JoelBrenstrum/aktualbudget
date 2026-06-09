@@ -115,7 +115,11 @@ export async function fetchActualAccounts(config: AppConfig) {
     await api.shutdown();
     return accounts;
   } catch (error) {
-    try { await api.shutdown(); } catch { /* ignore */ }
+    try {
+      await api.shutdown();
+    } catch {
+      /* ignore */
+    }
     throw error;
   }
 }
@@ -141,20 +145,16 @@ async function syncAccount(
     // Transform to Actual Budget format
     // Actual uses integer amounts (cents), Akahu uses decimal
     const actualTransactions = transactions.map((t) => ({
+      account: mapping.actualAccountId,
       date: t.date.split("T")[0],
       amount: Math.round(t.amount * 100),
       imported_id: t._id,
       payee_name: t.description,
-      notes: t.merchant?.name && t.merchant.name !== t.description
-        ? t.merchant.name
-        : undefined,
+      notes: t.merchant?.name && t.merchant.name !== t.description ? t.merchant.name : undefined,
       cleared: t.type !== "PENDING",
     }));
 
-    const result = await api.importTransactions(
-      mapping.actualAccountId,
-      actualTransactions,
-    );
+    const result = await api.importTransactions(mapping.actualAccountId, actualTransactions);
 
     return {
       actualAccountName: mapping.actualAccountName,
@@ -214,7 +214,7 @@ export async function runSync(config: AppConfig, syncDays = 30): Promise<SyncHis
       results.push(result);
       console.log(
         `[sync] ${mapping.akahuAccountName} → ${mapping.actualAccountName}: ` +
-        `${result.imported} imported, ${result.updated} updated (${result.status})`,
+          `${result.imported} imported, ${result.updated} updated (${result.status})`,
       );
     }
 
@@ -229,7 +229,11 @@ export async function runSync(config: AppConfig, syncDays = 30): Promise<SyncHis
     lastSyncTime = entry.timestamp;
     return entry;
   } catch (error) {
-    try { await api.shutdown(); } catch { /* ignore */ }
+    try {
+      await api.shutdown();
+    } catch {
+      /* ignore */
+    }
     throw error;
   } finally {
     isSyncing = false;

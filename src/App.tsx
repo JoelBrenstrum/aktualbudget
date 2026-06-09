@@ -94,7 +94,7 @@ function App() {
       const data = await res.json();
       if (data.success) {
         // Update local config state so other tabs see changes immediately
-        setConfig((prev) => prev ? { ...prev, ...updates } : prev);
+        setConfig((prev) => (prev ? { ...prev, ...updates } : prev));
         toast.success("Settings saved");
       } else {
         toast.error("Failed to save settings");
@@ -116,9 +116,7 @@ function App() {
     <div className="dark min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl px-6 py-10">
         <header className="mb-8">
-          <h1 className="font-heading text-3xl font-semibold tracking-tight">
-            Aktual Budget Sync
-          </h1>
+          <h1 className="font-heading text-3xl font-semibold tracking-tight">Aktual Budget Sync</h1>
           <p className="mt-1 text-muted-foreground">
             Sync your Akahu bank feeds into Actual Budget
           </p>
@@ -136,7 +134,6 @@ function App() {
               config={config}
               actualAccounts={actualAccounts}
               akahuAccounts={akahuAccounts}
-              onSave={saveConfig}
               onActualAccountsLoaded={setActualAccounts}
               onAkahuAccountsLoaded={setAkahuAccounts}
               onNext={() => setActiveTab("accounts")}

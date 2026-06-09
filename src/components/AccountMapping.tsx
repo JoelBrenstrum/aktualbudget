@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -18,12 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ArrowRight, Plus, Trash2, Link2 } from "lucide-react";
 import { toast } from "sonner";
-import type {
-  AppConfig,
-  ActualAccount,
-  AkahuAccount,
-  AccountMappingItem,
-} from "../App";
+import type { AppConfig, ActualAccount, AkahuAccount, AccountMappingItem } from "../App";
 
 interface Props {
   config: AppConfig;
@@ -33,16 +22,8 @@ interface Props {
   onNext: () => void;
 }
 
-export function AccountMapping({
-  config,
-  actualAccounts,
-  akahuAccounts,
-  onSave,
-  onNext,
-}: Props) {
-  const [mappings, setMappings] = useState<AccountMappingItem[]>(
-    config.accountMappings
-  );
+export function AccountMapping({ config, actualAccounts, akahuAccounts, onSave, onNext }: Props) {
+  const [mappings, setMappings] = useState<AccountMappingItem[]>(config.accountMappings);
 
   const [savedMappings, setSavedMappings] = useState(config.accountMappings);
 
@@ -62,11 +43,7 @@ export function AccountMapping({
     setMappings(mappings.filter((_, i) => i !== index));
   };
 
-  const updateMapping = (
-    index: number,
-    field: "actual" | "akahu",
-    id: string
-  ) => {
+  const updateMapping = (index: number, field: "actual" | "akahu", id: string) => {
     const updated = [...mappings];
     if (field === "actual") {
       const account = actualAccounts.find((a) => a.id === id);
@@ -87,9 +64,7 @@ export function AccountMapping({
   };
 
   const saveMappings = async () => {
-    const valid = mappings.filter(
-      (m) => m.actualAccountId && m.akahuAccountId
-    );
+    const valid = mappings.filter((m) => m.actualAccountId && m.akahuAccountId);
     if (valid.length === 0) {
       toast.error("Add at least one complete mapping");
       return;
@@ -107,8 +82,7 @@ export function AccountMapping({
   const validMappings = mappings.filter((m) => m.actualAccountId && m.akahuAccountId);
   const isDirty = JSON.stringify(validMappings) !== JSON.stringify(savedMappings);
 
-  const noAccounts =
-    actualAccounts.length === 0 || akahuAccounts.length === 0;
+  const noAccounts = actualAccounts.length === 0 || akahuAccounts.length === 0;
 
   return (
     <div className="space-y-6">
@@ -132,8 +106,7 @@ export function AccountMapping({
             <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
               <p>Test both connections first to load account lists.</p>
               <p className="mt-1 text-sm">
-                Go to the Connections tab and click "Test Connection" for both
-                services.
+                Go to the Connections tab and click "Test Connection" for both services.
               </p>
             </div>
           )}
@@ -150,9 +123,7 @@ export function AccountMapping({
                       </label>
                       <Select
                         value={mapping.actualAccountId}
-                        onValueChange={(v) =>
-                          updateMapping(index, "actual", v)
-                        }
+                        onValueChange={(v) => v && updateMapping(index, "actual", v)}
                       >
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Select account...">
@@ -161,17 +132,19 @@ export function AccountMapping({
                         </SelectTrigger>
                         <SelectContent>
                           {actualAccounts
-                            .filter((a) => a.id === mapping.actualAccountId || !mappings.some((m, i) => i !== index && m.actualAccountId === a.id))
+                            .filter(
+                              (a) =>
+                                a.id === mapping.actualAccountId ||
+                                !mappings.some((m, i) => i !== index && m.actualAccountId === a.id),
+                            )
                             .map((a) => (
-                            <SelectItem key={a.id} value={a.id}>
-                              {a.name}
-                              {a.type ? (
-                                <span className="ml-1 text-muted-foreground">
-                                  ({a.type})
-                                </span>
-                              ) : null}
-                            </SelectItem>
-                          ))}
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.name}
+                                {a.type ? (
+                                  <span className="ml-1 text-muted-foreground">({a.type})</span>
+                                ) : null}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -184,9 +157,7 @@ export function AccountMapping({
                       </label>
                       <Select
                         value={mapping.akahuAccountId}
-                        onValueChange={(v) =>
-                          updateMapping(index, "akahu", v)
-                        }
+                        onValueChange={(v) => v && updateMapping(index, "akahu", v)}
                       >
                         <SelectTrigger className="w-full">
                           <SelectValue placeholder="Select account...">
@@ -195,17 +166,21 @@ export function AccountMapping({
                         </SelectTrigger>
                         <SelectContent>
                           {akahuAccounts
-                            .filter((a) => a.id === mapping.akahuAccountId || !mappings.some((m, i) => i !== index && m.akahuAccountId === a.id))
+                            .filter(
+                              (a) =>
+                                a.id === mapping.akahuAccountId ||
+                                !mappings.some((m, i) => i !== index && m.akahuAccountId === a.id),
+                            )
                             .map((a) => (
-                            <SelectItem key={a.id} value={a.id}>
-                              {a.name}
-                              {a.connection ? (
-                                <span className="ml-1 text-muted-foreground">
-                                  — {a.connection}
-                                </span>
-                              ) : null}
-                            </SelectItem>
-                          ))}
+                              <SelectItem key={a.id} value={a.id}>
+                                {a.name}
+                                {a.connection ? (
+                                  <span className="ml-1 text-muted-foreground">
+                                    — {a.connection}
+                                  </span>
+                                ) : null}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -222,11 +197,7 @@ export function AccountMapping({
                 </div>
               ))}
 
-              <Button
-                variant="outline"
-                onClick={addMapping}
-                className="w-full gap-2"
-              >
+              <Button variant="outline" onClick={addMapping} className="w-full gap-2">
                 <Plus className="h-4 w-4" /> Add Mapping
               </Button>
             </>

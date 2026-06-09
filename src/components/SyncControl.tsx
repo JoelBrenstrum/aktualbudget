@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -18,14 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import {
-  Loader2,
-  RefreshCw,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  ArrowRightLeft,
-} from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, XCircle, Clock, ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 import type { AppConfig, SyncHistoryEntry } from "../App";
 
@@ -44,9 +31,7 @@ const INTERVAL_LABELS: Record<string, string> = {
 
 export function SyncControl({ config, onSave, onRefresh }: Props) {
   const [syncing, setSyncing] = useState(false);
-  const [scheduleEnabled, setScheduleEnabled] = useState(
-    config.schedule.enabled
-  );
+  const [scheduleEnabled, setScheduleEnabled] = useState(config.schedule.enabled);
   const [interval, setInterval] = useState(config.schedule.interval);
 
   const runSync = async () => {
@@ -57,7 +42,7 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
       if (data.success) {
         const totalImported = data.result.accounts.reduce(
           (sum: number, a: { imported: number }) => sum + a.imported,
-          0
+          0,
         );
         toast.success(`Sync complete — ${totalImported} transactions imported`);
         await onRefresh();
@@ -90,9 +75,7 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Manual Sync</CardTitle>
-              <CardDescription>
-                Trigger a sync for all mapped accounts
-              </CardDescription>
+              <CardDescription>Trigger a sync for all mapped accounts</CardDescription>
             </div>
             <Badge variant="secondary" className="gap-1">
               <ArrowRightLeft className="h-3 w-3" />
@@ -106,12 +89,7 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
               No account mappings configured. Go to Account Mapping tab first.
             </div>
           ) : (
-            <Button
-              onClick={runSync}
-              disabled={syncing}
-              className="w-full gap-2"
-              size="lg"
-            >
+            <Button onClick={runSync} disabled={syncing} className="w-full gap-2" size="lg">
               {syncing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
@@ -127,18 +105,14 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
       <Card>
         <CardHeader>
           <CardTitle>Schedule</CardTitle>
-          <CardDescription>
-            Automatically sync on a recurring schedule
-          </CardDescription>
+          <CardDescription>Automatically sync on a recurring schedule</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <Label>Auto-sync</Label>
               <p className="text-sm text-muted-foreground">
-                {scheduleEnabled
-                  ? `Running ${INTERVAL_LABELS[interval] || interval}`
-                  : "Disabled"}
+                {scheduleEnabled ? `Running ${INTERVAL_LABELS[interval] || interval}` : "Disabled"}
               </p>
             </div>
             <Switch
@@ -152,7 +126,7 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
             <Label>Frequency</Label>
             <Select
               value={interval}
-              onValueChange={(v) => updateSchedule(scheduleEnabled, v)}
+              onValueChange={(v) => v && updateSchedule(scheduleEnabled, v)}
               disabled={!hasMappings}
             >
               <SelectTrigger>
@@ -188,21 +162,13 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
   );
 }
 
-function SyncHistoryCard({
-  entry,
-  isLatest,
-}: {
-  entry: SyncHistoryEntry;
-  isLatest: boolean;
-}) {
+function SyncHistoryCard({ entry, isLatest }: { entry: SyncHistoryEntry; isLatest: boolean }) {
   const allSuccess = entry.accounts.every((a) => a.status === "success");
   const totalImported = entry.accounts.reduce((s, a) => s + a.imported, 0);
   const totalUpdated = entry.accounts.reduce((s, a) => s + a.updated, 0);
 
   return (
-    <div
-      className={`rounded-lg border p-4 ${isLatest ? "border-foreground/20 bg-muted/30" : ""}`}
-    >
+    <div className={`rounded-lg border p-4 ${isLatest ? "border-foreground/20 bg-muted/30" : ""}`}>
       <div className="mb-3 flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
           {allSuccess ? (
@@ -221,10 +187,7 @@ function SyncHistoryCard({
       </div>
       <div className="space-y-1">
         {entry.accounts.map((account, j) => (
-          <div
-            key={j}
-            className="flex items-center justify-between text-sm text-muted-foreground"
-          >
+          <div key={j} className="flex items-center justify-between text-sm text-muted-foreground">
             <span>
               {account.akahuAccountName} → {account.actualAccountName}
             </span>

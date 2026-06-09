@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +12,6 @@ interface Props {
   config: AppConfig;
   actualAccounts: ActualAccount[];
   akahuAccounts: AkahuAccount[];
-  onSave: (updates: Partial<AppConfig>) => Promise<void>;
   onActualAccountsLoaded: (accounts: ActualAccount[]) => void;
   onAkahuAccountsLoaded: (accounts: AkahuAccount[]) => void;
   onNext: () => void;
@@ -28,7 +21,6 @@ export function ConnectionSettings({
   config,
   actualAccounts,
   akahuAccounts,
-  onSave,
   onActualAccountsLoaded,
   onAkahuAccountsLoaded,
   onNext,
@@ -37,22 +29,20 @@ export function ConnectionSettings({
   const [actualUrl, setActualUrl] = useState(config.actual.serverUrl);
   const [actualSyncId, setActualSyncId] = useState(config.actual.syncId);
   const [actualPassword, setActualPassword] = useState(config.actual.password);
-  const [actualEncPassword, setActualEncPassword] = useState(
-    config.actual.encryptionPassword
-  );
+  const [actualEncPassword, setActualEncPassword] = useState(config.actual.encryptionPassword);
   const [actualTesting, setActualTesting] = useState(false);
-  const [actualStatus, setActualStatus] = useState<
-    "idle" | "success" | "error"
-  >(actualAccounts.length > 0 ? "success" : "idle");
+  const [actualStatus, setActualStatus] = useState<"idle" | "success" | "error">(
+    actualAccounts.length > 0 ? "success" : "idle",
+  );
   const [actualAccountCount, setActualAccountCount] = useState(actualAccounts.length);
 
   // Akahu form state
   const [akahuAppToken, setAkahuAppToken] = useState(config.akahu.appToken);
   const [akahuUserToken, setAkahuUserToken] = useState(config.akahu.userToken);
   const [akahuTesting, setAkahuTesting] = useState(false);
-  const [akahuStatus, setAkahuStatus] = useState<
-    "idle" | "success" | "error"
-  >(akahuAccounts.length > 0 ? "success" : "idle");
+  const [akahuStatus, setAkahuStatus] = useState<"idle" | "success" | "error">(
+    akahuAccounts.length > 0 ? "success" : "idle",
+  );
   const [akahuAccountCount, setAkahuAccountCount] = useState(akahuAccounts.length);
 
   const [showSecrets, setShowSecrets] = useState(false);
@@ -146,7 +136,12 @@ export function ConnectionSettings({
   const bothConnected = actualStatus === "success" && akahuStatus === "success";
 
   return (
-    <div className="space-y-6" onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}>
+    <div
+      className="space-y-6"
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.preventDefault();
+      }}
+    >
       <div className="grid gap-6 md:grid-cols-2">
         {/* Actual Budget Card */}
         <Card>
@@ -166,9 +161,7 @@ export function ConnectionSettings({
                 </Badge>
               )}
             </div>
-            <CardDescription>
-              Connect to your self-hosted Actual Budget server
-            </CardDescription>
+            <CardDescription>Connect to your self-hosted Actual Budget server</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -212,8 +205,7 @@ export function ConnectionSettings({
             </div>
             <div className="space-y-2">
               <Label htmlFor="actual-enc-password">
-                Encryption Password{" "}
-                <span className="text-muted-foreground">(optional)</span>
+                Encryption Password <span className="text-muted-foreground">(optional)</span>
               </Label>
               <div className="relative">
                 <Input
@@ -236,13 +228,14 @@ export function ConnectionSettings({
             </div>
             <Button
               type="button"
-              onClick={(e) => { e.preventDefault(); testActual(); }}
+              onClick={(e) => {
+                e.preventDefault();
+                testActual();
+              }}
               disabled={actualTesting || !actualUrl || !actualSyncId || !actualPassword}
               className="w-full"
             >
-              {actualTesting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
+              {actualTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Test Connection
             </Button>
           </CardContent>
@@ -266,9 +259,7 @@ export function ConnectionSettings({
                 </Badge>
               )}
             </div>
-            <CardDescription>
-              Connect to your Akahu open banking account
-            </CardDescription>
+            <CardDescription>Connect to your Akahu open banking account</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -315,13 +306,14 @@ export function ConnectionSettings({
             </div>
             <Button
               type="button"
-              onClick={(e) => { e.preventDefault(); testAkahu(); }}
+              onClick={(e) => {
+                e.preventDefault();
+                testAkahu();
+              }}
               disabled={akahuTesting || !akahuAppToken || !akahuUserToken}
               className="w-full"
             >
-              {akahuTesting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
+              {akahuTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Test Connection
             </Button>
           </CardContent>

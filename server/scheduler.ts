@@ -2,13 +2,13 @@ import cron from "node-cron";
 import { loadConfig } from "./config.js";
 import { runSync } from "./sync.js";
 
-let scheduledTask: cron.ScheduledTask | null = null;
+let scheduledTask: ReturnType<typeof cron.schedule> | null = null;
 
 const INTERVAL_TO_CRON: Record<string, string> = {
   "every-1-hour": "0 * * * *",
   "every-6-hours": "0 */6 * * *",
   "every-12-hours": "0 */12 * * *",
-  "daily": "0 0 * * *",
+  daily: "0 0 * * *",
 };
 
 export function startSchedule(interval: string): void {

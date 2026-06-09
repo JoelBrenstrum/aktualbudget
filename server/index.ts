@@ -71,7 +71,7 @@ app.post("/api/actual/test", async (req, res) => {
   try {
     const accounts = await fetchActualAccounts(testConfig);
     const mapped = accounts
-      .filter((a: { closed: boolean }) => !a.closed)
+      .filter((a) => !a.closed)
       .map((a: { id: string; name: string; type?: string }) => ({
         id: a.id,
         name: a.name,
