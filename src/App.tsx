@@ -115,11 +115,14 @@ function App() {
   return (
     <div className="dark min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl px-6 py-10">
-        <header className="mb-8">
-          <h1 className="font-heading text-3xl font-semibold tracking-tight">Aktual Budget Sync</h1>
-          <p className="mt-1 text-muted-foreground">
-            Sync your Akahu bank feeds into Actual Budget
-          </p>
+        <header className="mb-8 flex items-center gap-4">
+          <img src="/logo.png" alt="Aktual Budget Sync" className="h-12 w-12 rounded-xl" />
+          <div>
+            <h1 className="font-heading text-3xl font-semibold tracking-tight text-white">
+              Aktual Budget Sync
+            </h1>
+            <p className="mt-1 text-white/70">Sync your Akahu bank feeds into Actual Budget</p>
+          </div>
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
