@@ -132,8 +132,8 @@ export function AccountMapping({
               {mappings.map((mapping, index) => (
                 <div key={index}>
                   {index > 0 && <Separator className="mb-4" />}
-                  <div className="flex items-end gap-3">
-                    <div className="flex-1 space-y-1.5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div className="min-w-0 flex-1 space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">
                         Actual Budget Account
                       </label>
@@ -143,8 +143,10 @@ export function AccountMapping({
                           updateMapping(index, "actual", v)
                         }
                       >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select account..." />
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select account...">
+                            {mapping.actualAccountName || mapping.actualAccountId}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {actualAccounts.map((a) => (
@@ -161,9 +163,9 @@ export function AccountMapping({
                       </Select>
                     </div>
 
-                    <ArrowRight className="mb-2.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                    <ArrowRight className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block sm:mb-2.5" />
 
-                    <div className="flex-1 space-y-1.5">
+                    <div className="min-w-0 flex-1 space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">
                         Akahu Account
                       </label>
@@ -173,8 +175,10 @@ export function AccountMapping({
                           updateMapping(index, "akahu", v)
                         }
                       >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select account..." />
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select account...">
+                            {mapping.akahuAccountName || mapping.akahuAccountId}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {akahuAccounts.map((a) => (
@@ -195,7 +199,7 @@ export function AccountMapping({
                       variant="ghost"
                       size="icon"
                       onClick={() => removeMapping(index)}
-                      className="mb-0.5 shrink-0 text-muted-foreground hover:text-destructive"
+                      className="self-end shrink-0 text-muted-foreground hover:text-destructive sm:mb-0.5"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

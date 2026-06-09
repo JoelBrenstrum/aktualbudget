@@ -93,6 +93,8 @@ function App() {
       });
       const data = await res.json();
       if (data.success) {
+        // Update local config state so other tabs see changes immediately
+        setConfig((prev) => prev ? { ...prev, ...updates } : prev);
         toast.success("Settings saved");
       } else {
         toast.error("Failed to save settings");
