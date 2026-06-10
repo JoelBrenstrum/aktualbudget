@@ -143,11 +143,95 @@ export function ConnectionSettings({
       }}
     >
       <div className="grid gap-6 md:grid-cols-2">
-        {/* Actual Budget Card */}
+        {/* Akahu Card (Left) */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Actual Budget</CardTitle>
+              <CardTitle className="flex items-center gap-2">
+                <img src="/akahu.svg" alt="Akahu" className="h-5 w-5" />
+                Akahu
+              </CardTitle>
+              {akahuStatus === "success" && (
+                <Badge variant="secondary" className="gap-1">
+                  <CheckCircle2 className="h-3 w-3 text-green-500" />
+                  {akahuAccountCount} accounts
+                </Badge>
+              )}
+              {akahuStatus === "error" && (
+                <Badge variant="destructive" className="gap-1">
+                  <XCircle className="h-3 w-3" />
+                  Failed
+                </Badge>
+              )}
+            </div>
+            <CardDescription>Connect to your Akahu open banking account</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="akahu-app-token">App Token</Label>
+              <div className="relative">
+                <Input
+                  id="akahu-app-token"
+                  type={showSecrets ? "text" : "password"}
+                  placeholder="app_token_..."
+                  value={akahuAppToken}
+                  onChange={(e) => setAkahuAppToken(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                >
+                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="akahu-user-token">User Token</Label>
+              <div className="relative">
+                <Input
+                  id="akahu-user-token"
+                  type={showSecrets ? "text" : "password"}
+                  placeholder="user_token_..."
+                  value={akahuUserToken}
+                  onChange={(e) => setAkahuUserToken(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowSecrets(!showSecrets)}
+                >
+                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+            <Button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                testAkahu();
+              }}
+              disabled={akahuTesting || !akahuAppToken || !akahuUserToken}
+              className="w-full"
+            >
+              {akahuTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Test Connection
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Actual Budget Card (Right) */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <img src="/actualbudget.png" alt="Actual Budget" className="h-5 w-5" />
+                Actual Budget
+              </CardTitle>
               {actualStatus === "success" && (
                 <Badge variant="secondary" className="gap-1">
                   <CheckCircle2 className="h-3 w-3 text-green-500" />
@@ -236,84 +320,6 @@ export function ConnectionSettings({
               className="w-full"
             >
               {actualTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Test Connection
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Akahu Card */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Akahu</CardTitle>
-              {akahuStatus === "success" && (
-                <Badge variant="secondary" className="gap-1">
-                  <CheckCircle2 className="h-3 w-3 text-green-500" />
-                  {akahuAccountCount} accounts
-                </Badge>
-              )}
-              {akahuStatus === "error" && (
-                <Badge variant="destructive" className="gap-1">
-                  <XCircle className="h-3 w-3" />
-                  Failed
-                </Badge>
-              )}
-            </div>
-            <CardDescription>Connect to your Akahu open banking account</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="akahu-app-token">App Token</Label>
-              <div className="relative">
-                <Input
-                  id="akahu-app-token"
-                  type={showSecrets ? "text" : "password"}
-                  placeholder="app_token_..."
-                  value={akahuAppToken}
-                  onChange={(e) => setAkahuAppToken(e.target.value)}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowSecrets(!showSecrets)}
-                >
-                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="akahu-user-token">User Token</Label>
-              <div className="relative">
-                <Input
-                  id="akahu-user-token"
-                  type={showSecrets ? "text" : "password"}
-                  placeholder="user_token_..."
-                  value={akahuUserToken}
-                  onChange={(e) => setAkahuUserToken(e.target.value)}
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-0 h-full px-3 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowSecrets(!showSecrets)}
-                >
-                  {showSecrets ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-            <Button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                testAkahu();
-              }}
-              disabled={akahuTesting || !akahuAppToken || !akahuUserToken}
-              className="w-full"
-            >
-              {akahuTesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Test Connection
             </Button>
           </CardContent>

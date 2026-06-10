@@ -45,6 +45,7 @@ export interface CachedAccount {
   id: string;
   name: string;
   type?: string;
+  balance?: number;
   connection?: string;
   formattedAccount?: string;
 }

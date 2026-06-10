@@ -18,6 +18,7 @@ export interface AkahuAccount {
   type?: string;
   connection?: string;
   formattedAccount?: string;
+  balance?: number;
 }
 
 export interface AccountMappingItem {
@@ -152,6 +153,7 @@ function App() {
               akahuAccounts={akahuAccounts}
               onSave={saveConfig}
               onNext={() => setActiveTab("sync")}
+              onRefreshActual={setActualAccounts}
             />
           </TabsContent>
 

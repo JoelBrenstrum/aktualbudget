@@ -2,7 +2,8 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
-import { loadConfig, saveConfig, type AppConfig } from "./config.js";
+import api from "@actual-app/api";
+import { loadConfig, saveConfig, getDataDir, type AppConfig } from "./config.js";
 import { fetchActualAccounts, fetchAkahuAccounts, runSync, getSyncStatus } from "./sync.js";
 import { initScheduler, startSchedule, stopSchedule } from "./scheduler.js";
 
@@ -80,6 +81,15 @@ app.post("/api/actual/test", async (req, res) => {
     // Cache for persistence across refreshes
     const current = loadConfig();
     current.cachedActualAccounts = mapped;
+    // Remove mappings for accounts that no longer exist
+    const accountIds = new Set(mapped.map((a: { id: string }) => a.id));
+    const before = current.accountMappings.length;
+    current.accountMappings = current.accountMappings.filter((m) =>
+      accountIds.has(m.actualAccountId),
+    );
+    if (current.accountMappings.length < before) {
+      console.log(`[config] Removed ${before - current.accountMappings.length} stale mapping(s)`);
+    }
     saveConfig(current);
     res.json({ success: true, accounts: mapped });
   } catch (error) {
@@ -105,6 +115,7 @@ app.post("/api/akahu/test", async (req, res) => {
         id: a._id,
         name: a.name,
         type: a.type,
+        balance: a.balance?.current,
         connection: a.connection.name,
         formattedAccount: a.formatted_account,
       }));
@@ -143,6 +154,55 @@ app.get("/api/sync/status", (_req, res) => {
     schedule: config.schedule,
     history: config.syncHistory.slice(0, 10),
   });
+});
+
+app.post("/api/actual/create-account", async (req, res) => {
+  const { name } = req.body as { name: string };
+
+  const config = loadConfig();
+  const dataDir = getDataDir();
+  const serverURL = config.actual.serverUrl.trim();
+  const normalizedUrl =
+    serverURL && !/^https?:\/\//i.test(serverURL) ? `https://${serverURL}` : serverURL;
+
+  try {
+    await api.init({
+      dataDir,
+      serverURL: normalizedUrl,
+      password: config.actual.password,
+    });
+    await api.downloadBudget(config.actual.syncId, {
+      password: config.actual.encryptionPassword || undefined,
+    });
+
+    const newAccountId = await api.createAccount({ name, offbudget: false }, 0);
+
+    const accounts = await api.getAccounts();
+    await api.shutdown();
+
+    // Update cached accounts
+    const current = loadConfig();
+    current.cachedActualAccounts = accounts
+      .filter((a: { closed?: boolean }) => !a.closed)
+      .map((a: { id: string; name: string }) => ({
+        id: a.id,
+        name: a.name,
+      }));
+    saveConfig(current);
+
+    res.json({ success: true, accountId: newAccountId, accounts: current.cachedActualAccounts });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    try {
+      await api.shutdown();
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
 // SPA fallback
