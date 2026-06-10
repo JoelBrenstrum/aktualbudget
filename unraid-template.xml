@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<Container version="2">
+    <Name>aktualbudgetsync</Name>
+    <Repository>ghcr.io/joelbrenstrum/aktualbudget:latest</Repository>
+    <Registry />
+    <Network>bridge</Network>
+    <MyIP />
+    <Shell>sh</Shell>
+    <Privileged>false</Privileged>
+    <Support />
+    <Project />
+    <ReadMe />
+    <Overview />
+    <Category />
+    <WebUI>http://[IP]:[PORT:5007]</WebUI>
+    <TemplateURL>
+        https://raw.githubusercontent.com/JoelBrenstrum/aktualbudget/refs/heads/main/unraid-template.xml</TemplateURL>
+    <Icon>
+        https://raw.githubusercontent.com/JoelBrenstrum/aktualbudget/refs/heads/main/public/logo.png</Icon>
+    <ExtraParams />
+    <PostArgs />
+    <CPUset />
+    <DonateText />
+    <DonateLink />
+    <Requires />
+    <Config Name="Host Path 1" Target="/app/data" Default="" Mode="rw" Description="" Type="Path"
+        Display="always" Required="false" Mask="false">/mnt/user/appdata/aktualbudget-sync/</Config>
+    <Config Name="Host Port 1" Target="3001" Default="" Mode="tcp" Description="" Type="Port"
+        Display="always" Required="false" Mask="false">5007</Config>
+    <TailscaleStateDir />
+</Container>

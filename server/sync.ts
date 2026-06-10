@@ -214,15 +214,18 @@ async function syncAccount(
 
     const result = await api.importTransactions(mapping.actualAccountId, actualTransactions);
 
-    // Add starting balance if this is the first sync for this account
+    // Always update starting balance: recalculate and date before oldest transaction
     const balanceImportedId = `aktualsync-starting-balance-${mapping.akahuAccountId}`;
-    if (akahuBalance != null && (result.added?.length ?? 0) > 0) {
-      // Check if starting balance already exists by trying to import with same imported_id
+    if (akahuBalance != null && actualTransactions.length > 0) {
       const transactionSum = actualTransactions.reduce((sum, t) => sum + (t.amount ?? 0), 0);
       const startingBalance = Math.round(akahuBalance * 100) - transactionSum;
 
-      const balanceDate = new Date();
-      balanceDate.setDate(balanceDate.getDate() - (syncDays + 1));
+      // Find the oldest transaction date and go 1 day before it
+      const oldestDate = actualTransactions.reduce((oldest, t) => {
+        return t.date < oldest ? t.date : oldest;
+      }, actualTransactions[0].date);
+      const balanceDate = new Date(oldestDate);
+      balanceDate.setDate(balanceDate.getDate() - 1);
       const balanceDateStr = toLocalDateStr(balanceDate.toISOString());
 
       // Find the "Starting Balances" category
@@ -246,7 +249,11 @@ async function syncAccount(
 
       if (balanceResult.added?.length) {
         console.log(
-          `[sync] Added starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)} (akahu=$${akahuBalance.toFixed(2)}, txn_sum=$${(transactionSum / 100).toFixed(2)})`,
+          `[sync] Added starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)}`,
+        );
+      } else if (balanceResult.updated?.length) {
+        console.log(
+          `[sync] Updated starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)}`,
         );
       }
     }
