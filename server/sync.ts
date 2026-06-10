@@ -235,11 +235,8 @@ async function syncAccount(
       );
 
       // Check if starting balance transaction already exists
-      const existingTxns = await api.getTransactions(
-        mapping.actualAccountId,
-        "2000-01-01",
-        balanceDateStr,
-      );
+      const today = toLocalDateStr(new Date().toISOString());
+      const existingTxns = await api.getTransactions(mapping.actualAccountId, "2000-01-01", today);
       const existingBalance = existingTxns.find((t) => t.imported_id === balanceImportedId);
 
       if (existingBalance) {
