@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { loadConfig, saveConfig, type AppConfig } from "./config.js";
 import { fetchActualAccounts, fetchAkahuAccounts, runSync, getSyncStatus } from "./sync.js";
-import { initScheduler, startSchedule, stopSchedule, getAvailableIntervals } from "./scheduler.js";
+import { initScheduler, startSchedule, stopSchedule } from "./scheduler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -105,7 +105,7 @@ app.post("/api/akahu/test", async (req, res) => {
         id: a._id,
         name: a.name,
         type: a.type,
-        connection: a.connection?.name,
+        connection: a.connection.name,
         formattedAccount: a.formatted_account,
       }));
     // Cache for persistence across refreshes
@@ -121,10 +121,11 @@ app.post("/api/akahu/test", async (req, res) => {
   }
 });
 
-app.post("/api/sync/run", async (_req, res) => {
+app.post("/api/sync/run", async (req, res) => {
   const config = loadConfig();
+  const syncDays = req.body?.syncDays ?? 30;
   try {
-    const result = await runSync(config);
+    const result = await runSync(config, syncDays);
     res.json({ success: true, result });
   } catch (error) {
     res.status(400).json({
@@ -140,7 +141,6 @@ app.get("/api/sync/status", (_req, res) => {
   res.json({
     ...status,
     schedule: config.schedule,
-    intervals: getAvailableIntervals(),
     history: config.syncHistory.slice(0, 10),
   });
 });

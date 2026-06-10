@@ -1,4 +1,6 @@
 import api from "@actual-app/api";
+import { AkahuClient } from "akahu";
+import type { Account, Transaction } from "akahu";
 import {
   type AccountMapping,
   type AccountSyncResult,
@@ -17,87 +19,13 @@ function normalizeUrl(url: string): string {
   return trimmed;
 }
 
-interface AkahuTransaction {
-  _id: string;
-  date: string;
-  description: string;
-  amount: number;
-  type: string;
-  balance?: number;
-  merchant?: { name?: string };
-  category?: { name?: string };
-  meta?: Record<string, unknown>;
+function createAkahuClient(appToken: string): AkahuClient {
+  return new AkahuClient({ appToken });
 }
 
-interface AkahuPaginatedResponse {
-  success: boolean;
-  items: AkahuTransaction[];
-  cursor?: { next?: string };
-}
-
-interface AkahuAccount {
-  _id: string;
-  name: string;
-  type: string;
-  formatted_account?: string;
-  status: string;
-  balance?: { available?: number; current?: number; currency?: string };
-  connection?: { _id?: string; name?: string };
-}
-
-async function fetchAkahuTransactions(
-  appToken: string,
-  userToken: string,
-  accountId: string,
-  startDate: string,
-): Promise<AkahuTransaction[]> {
-  const allTransactions: AkahuTransaction[] = [];
-  let cursor: string | undefined;
-
-  do {
-    const params = new URLSearchParams({ start: startDate });
-    if (cursor) params.set("cursor", cursor);
-
-    const url = `https://api.akahu.io/v1/accounts/${accountId}/transactions?${params}`;
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${userToken}`,
-        "X-Akahu-Id": appToken,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Akahu API error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = (await response.json()) as AkahuPaginatedResponse;
-    allTransactions.push(...data.items);
-    cursor = data.cursor?.next ?? undefined;
-  } while (cursor);
-
-  return allTransactions;
-}
-
-export async function fetchAkahuAccounts(
-  appToken: string,
-  userToken: string,
-): Promise<AkahuAccount[]> {
-  const response = await fetch("https://api.akahu.io/v1/accounts", {
-    headers: {
-      Authorization: `Bearer ${userToken}`,
-      "X-Akahu-Id": appToken,
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Akahu API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = (await response.json()) as { success: boolean; items: AkahuAccount[] };
-  if (!data.success) {
-    throw new Error("Akahu API returned success: false");
-  }
-  return data.items;
+export async function fetchAkahuAccounts(appToken: string, userToken: string): Promise<Account[]> {
+  const client = createAkahuClient(appToken);
+  return client.accounts.list(userToken);
 }
 
 export async function fetchActualAccounts(config: AppConfig) {
@@ -124,35 +52,56 @@ export async function fetchActualAccounts(config: AppConfig) {
   }
 }
 
+function toLocalDateStr(isoDate: string): string {
+  const d = new Date(isoDate);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function getMerchantName(t: Transaction): string | undefined {
+  if ("merchant" in t && t.merchant?.name) {
+    return t.merchant.name;
+  }
+  return undefined;
+}
+
 async function syncAccount(
-  mapping: AccountMapping,
-  appToken: string,
+  client: AkahuClient,
   userToken: string,
+  mapping: AccountMapping,
   syncDays: number,
 ): Promise<AccountSyncResult> {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - syncDays);
-  const startDateStr = startDate.toISOString().split("T")[0];
+  const startDateStr = toLocalDateStr(startDate.toISOString());
 
   try {
-    const transactions = await fetchAkahuTransactions(
-      appToken,
-      userToken,
-      mapping.akahuAccountId,
-      startDateStr,
-    );
+    // Fetch settled transactions with pagination
+    const allTransactions: Transaction[] = [];
+    let cursor: string | null | undefined;
+
+    do {
+      const page = await client.accounts.listTransactions(userToken, mapping.akahuAccountId, {
+        start: startDateStr,
+        cursor: cursor ?? undefined,
+      });
+      allTransactions.push(...page.items);
+      cursor = page.cursor.next;
+    } while (cursor);
 
     // Transform to Actual Budget format
-    // Actual uses integer amounts (cents), Akahu uses decimal
-    const actualTransactions = transactions.map((t) => ({
-      account: mapping.actualAccountId,
-      date: t.date.split("T")[0],
-      amount: Math.round(t.amount * 100),
-      imported_id: t._id,
-      payee_name: t.description,
-      notes: t.merchant?.name && t.merchant.name !== t.description ? t.merchant.name : undefined,
-      cleared: t.type !== "PENDING",
-    }));
+    // Match reference: merchant name as payee, raw description as notes
+    const actualTransactions = allTransactions.map((t) => {
+      const merchantName = getMerchantName(t);
+      return {
+        account: mapping.actualAccountId,
+        date: toLocalDateStr(t.date),
+        amount: Math.round(t.amount * 100),
+        imported_id: t._id,
+        payee_name: merchantName ?? t.description,
+        notes: merchantName ? t.description : undefined,
+        cleared: true,
+      };
+    });
 
     const result = await api.importTransactions(mapping.actualAccountId, actualTransactions);
 
@@ -182,7 +131,11 @@ export function getSyncStatus() {
   return { isSyncing, lastSyncTime };
 }
 
-export async function runSync(config: AppConfig, syncDays = 30): Promise<SyncHistoryEntry> {
+export async function runSync(
+  config: AppConfig,
+  syncDays = 30,
+  trigger: "manual" | "scheduled" = "manual",
+): Promise<SyncHistoryEntry> {
   if (isSyncing) {
     throw new Error("Sync is already running");
   }
@@ -192,8 +145,13 @@ export async function runSync(config: AppConfig, syncDays = 30): Promise<SyncHis
 
   isSyncing = true;
   const dataDir = getDataDir();
+  const client = createAkahuClient(config.akahu.appToken);
 
   try {
+    // Trigger Akahu to refresh bank data before syncing
+    await client.accounts.refreshAll(config.akahu.userToken);
+    console.log("[sync] Triggered Akahu account refresh");
+
     await api.init({
       dataDir,
       serverURL: normalizeUrl(config.actual.serverUrl),
@@ -205,12 +163,7 @@ export async function runSync(config: AppConfig, syncDays = 30): Promise<SyncHis
 
     const results: AccountSyncResult[] = [];
     for (const mapping of config.accountMappings) {
-      const result = await syncAccount(
-        mapping,
-        config.akahu.appToken,
-        config.akahu.userToken,
-        syncDays,
-      );
+      const result = await syncAccount(client, config.akahu.userToken, mapping, syncDays);
       results.push(result);
       console.log(
         `[sync] ${mapping.akahuAccountName} → ${mapping.actualAccountName}: ` +
@@ -222,6 +175,7 @@ export async function runSync(config: AppConfig, syncDays = 30): Promise<SyncHis
 
     const entry: SyncHistoryEntry = {
       timestamp: new Date().toISOString(),
+      trigger,
       accounts: results,
     };
 

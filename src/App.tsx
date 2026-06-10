@@ -30,6 +30,7 @@ export interface AccountMappingItem {
 export interface ScheduleConfig {
   enabled: boolean;
   interval: string;
+  syncDays: number;
 }
 
 export interface AccountSyncResult {
@@ -43,6 +44,7 @@ export interface AccountSyncResult {
 
 export interface SyncHistoryEntry {
   timestamp: string;
+  trigger?: "manual" | "scheduled";
   accounts: AccountSyncResult[];
 }
 

@@ -54,10 +54,15 @@ export function AccountMapping({ config, actualAccounts, akahuAccounts, onSave, 
       };
     } else {
       const account = akahuAccounts.find((a) => a.id === id);
+      const displayName = account
+        ? account.connection
+          ? `${account.name} — ${account.connection}`
+          : account.name
+        : "";
       updated[index] = {
         ...updated[index],
         akahuAccountId: id,
-        akahuAccountName: account?.name || "",
+        akahuAccountName: displayName,
       };
     }
     setMappings(updated);

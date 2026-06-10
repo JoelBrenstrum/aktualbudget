@@ -8,6 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -22,22 +23,37 @@ interface Props {
   onRefresh: () => Promise<void>;
 }
 
-const INTERVAL_LABELS: Record<string, string> = {
-  "every-1-hour": "Every hour",
-  "every-6-hours": "Every 6 hours",
-  "every-12-hours": "Every 12 hours",
-  daily: "Daily",
+const CRON_PRESETS: { label: string; cron: string }[] = [
+  { label: "Hourly", cron: "0 * * * *" },
+  { label: "6 hours", cron: "0 */6 * * *" },
+  { label: "12 hours", cron: "0 */12 * * *" },
+  { label: "Daily", cron: "0 0 * * *" },
+];
+
+const SYNC_DAYS_OPTIONS: Record<string, string> = {
+  "7": "7 days",
+  "14": "14 days",
+  "30": "30 days",
+  "60": "60 days",
+  "90": "90 days",
+  "180": "180 days",
+  "365": "1 year",
 };
 
 export function SyncControl({ config, onSave, onRefresh }: Props) {
   const [syncing, setSyncing] = useState(false);
+  const [syncDays, setSyncDays] = useState(String(config.schedule.syncDays ?? 30));
   const [scheduleEnabled, setScheduleEnabled] = useState(config.schedule.enabled);
   const [interval, setInterval] = useState(config.schedule.interval);
 
   const runSync = async () => {
     setSyncing(true);
     try {
-      const res = await fetch("/api/sync/run", { method: "POST" });
+      const res = await fetch("/api/sync/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ syncDays: Number(syncDays) }),
+      });
       const data = await res.json();
       if (data.success) {
         const totalImported = data.result.accounts.reduce(
@@ -56,12 +72,19 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
     }
   };
 
+  const updateSyncDays = async (days: string) => {
+    setSyncDays(days);
+    await onSave({
+      schedule: { enabled: scheduleEnabled, interval, syncDays: Number(days) },
+    });
+  };
+
   const updateSchedule = async (enabled: boolean, newInterval?: string) => {
     const iv = newInterval || interval;
     setScheduleEnabled(enabled);
     if (newInterval) setInterval(newInterval);
     await onSave({
-      schedule: { enabled, interval: iv },
+      schedule: { enabled, interval: iv, syncDays: Number(syncDays) },
     });
   };
 
@@ -69,6 +92,86 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* Schedule */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Schedule</CardTitle>
+          <CardDescription>Configure sync frequency and lookback period</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Lookback Period</Label>
+            <Select value={syncDays} onValueChange={(v) => v && updateSyncDays(v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(SYNC_DAYS_OPTIONS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              How far back to fetch transactions from Akahu
+            </p>
+          </div>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label>Auto-sync</Label>
+              <p className="text-sm text-muted-foreground">
+                {scheduleEnabled ? `Schedule: ${interval}` : "Disabled"}
+              </p>
+            </div>
+            <Switch
+              checked={scheduleEnabled}
+              onCheckedChange={(checked) => updateSchedule(checked)}
+              disabled={!hasMappings}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Cron Expression</Label>
+            <div className="flex gap-2">
+              <Input
+                value={interval}
+                onChange={(e) => setInterval(e.target.value)}
+                onBlur={() => updateSchedule(scheduleEnabled)}
+                placeholder="* * * * *"
+                className="font-mono"
+                disabled={!hasMappings}
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => updateSchedule(scheduleEnabled)}
+                disabled={!hasMappings}
+              >
+                Apply
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {CRON_PRESETS.map((p) => (
+                <Button
+                  key={p.cron}
+                  variant={interval === p.cron ? "default" : "outline"}
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    setInterval(p.cron);
+                    updateSchedule(scheduleEnabled, p.cron);
+                  }}
+                  disabled={!hasMappings}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Manual Sync */}
       <Card>
         <CardHeader>
@@ -89,58 +192,21 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
               No account mappings configured. Go to Account Mapping tab first.
             </div>
           ) : (
-            <Button onClick={runSync} disabled={syncing} className="w-full gap-2" size="lg">
-              {syncing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {syncing ? "Syncing..." : "Sync Now"}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Schedule */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Schedule</CardTitle>
-          <CardDescription>Automatically sync on a recurring schedule</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label>Auto-sync</Label>
-              <p className="text-sm text-muted-foreground">
-                {scheduleEnabled ? `Running ${INTERVAL_LABELS[interval] || interval}` : "Disabled"}
+            <div className="space-y-3">
+              <Button onClick={runSync} disabled={syncing} className="w-full gap-2" size="lg">
+                {syncing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {syncing ? "Syncing..." : "Sync Now"}
+              </Button>
+              <p className="text-xs text-center text-muted-foreground">
+                Uses the {SYNC_DAYS_OPTIONS[syncDays] || `${syncDays} days`} lookback period
+                configured above
               </p>
             </div>
-            <Switch
-              checked={scheduleEnabled}
-              onCheckedChange={(checked) => updateSchedule(checked)}
-              disabled={!hasMappings}
-            />
-          </div>
-          <Separator />
-          <div className="space-y-1.5">
-            <Label>Frequency</Label>
-            <Select
-              value={interval}
-              onValueChange={(v) => v && updateSchedule(scheduleEnabled, v)}
-              disabled={!hasMappings}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(INTERVAL_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          )}
         </CardContent>
       </Card>
 
@@ -148,8 +214,15 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
       {config.syncHistory.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Recent Syncs</CardTitle>
-            <CardDescription>Per-account sync results</CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Recent Syncs</CardTitle>
+                <CardDescription>Per-account sync results</CardDescription>
+              </div>
+              <Button variant="ghost" size="icon" onClick={onRefresh}>
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             {config.syncHistory.slice(0, 5).map((entry, i) => (
@@ -179,6 +252,9 @@ function SyncHistoryCard({ entry, isLatest }: { entry: SyncHistoryEntry; isLates
           <span className="font-medium">
             {totalImported} imported, {totalUpdated} updated
           </span>
+          <Badge variant="outline" className="text-xs">
+            {entry.trigger === "scheduled" ? "Scheduled" : "Manual"}
+          </Badge>
         </div>
         <div className="flex items-center gap-1 text-muted-foreground">
           <Clock className="h-3 w-3" />

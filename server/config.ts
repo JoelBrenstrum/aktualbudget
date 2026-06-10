@@ -23,6 +23,7 @@ export interface AccountMapping {
 export interface ScheduleConfig {
   enabled: boolean;
   interval: string; // "every-1-hour" | "every-6-hours" | "every-12-hours" | "daily"
+  syncDays: number;
 }
 
 export interface AccountSyncResult {
@@ -36,6 +37,7 @@ export interface AccountSyncResult {
 
 export interface SyncHistoryEntry {
   timestamp: string;
+  trigger: "manual" | "scheduled";
   accounts: AccountSyncResult[];
 }
 
@@ -74,7 +76,8 @@ const DEFAULT_CONFIG: AppConfig = {
   accountMappings: [],
   schedule: {
     enabled: false,
-    interval: "every-6-hours",
+    interval: "0 */6 * * *",
+    syncDays: 30,
   },
   syncHistory: [],
   cachedActualAccounts: [],
