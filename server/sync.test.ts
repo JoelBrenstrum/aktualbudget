@@ -406,4 +406,102 @@ describe("Starting Balance", () => {
       expect(fixedDate).toBe("2026-01-04");
     });
   });
+
+  describe("sequential sync: wide then narrow lookback", () => {
+    const AKAHU_BALANCE = -357555; // -$3575.55
+
+    // Simulate what syncAccount does for starting balance
+    function simulateSync(
+      akahuTxns: { date: string; amount: number }[],
+      existingTransfers: { date: string; amount: number }[],
+      existingBalanceDate: string | undefined,
+    ) {
+      // Dedup
+      const filtered = akahuTxns.filter(
+        (t) => !existingTransfers.some((et) => et.date === t.date && et.amount === t.amount),
+      );
+
+      const importedSum = filtered.reduce((s, t) => s + t.amount, 0);
+      const transferSum = existingTransfers.reduce((s, t) => s + t.amount, 0);
+      const transactionSum = importedSum + transferSum;
+      const newStartingBalance = calculateStartingBalance(AKAHU_BALANCE, transactionSum);
+
+      const allDates = [...akahuTxns.map((t) => t.date), ...existingTransfers.map((t) => t.date)];
+      const oldestTxnDate =
+        allDates.length > 0 ? allDates.reduce((o, d) => (d < o ? d : o), allDates[0]) : undefined;
+      const balanceDateStr = oldestTxnDate ? getStartingBalanceDate(oldestTxnDate) : "today";
+
+      // Should we update the amount?
+      const shouldUpdate = shouldUpdateStartingBalance(balanceDateStr, existingBalanceDate);
+
+      return { newStartingBalance, balanceDateStr, shouldUpdate, transactionSum };
+    }
+
+    it("initial sync from Jan 1 → creates starting balance", () => {
+      // 6 months of transactions: sum = $377.47 (mix of debits and credits)
+      const txns = [
+        { date: "2026-01-02", amount: -50000 },
+        { date: "2026-03-15", amount: -30000 },
+        { date: "2026-05-01", amount: 420280 }, // payment
+        { date: "2026-06-01", amount: -302533 },
+      ];
+
+      const result = simulateSync(txns, [], undefined);
+
+      // Starting balance = akahu balance - sum of txns
+      expect(result.shouldUpdate).toBe(true); // no existing balance → always create
+      expect(result.balanceDateStr).toBe("2026-01-01"); // day before oldest
+      expect(result.newStartingBalance + result.transactionSum).toBe(AKAHU_BALANCE);
+    });
+
+    it("narrow 30-day sync should NOT update starting balance amount", () => {
+      // Only last 30 days of transactions (partial data)
+      const txns30Days = [
+        { date: "2026-05-15", amount: -10000 },
+        { date: "2026-06-01", amount: -5000 },
+      ];
+
+      // Existing starting balance was set on initial sync (date: Jan 1)
+      const result = simulateSync(txns30Days, [], "2026-01-01");
+
+      // Should NOT update: oldest txn (May 15) is AFTER existing balance (Jan 1)
+      expect(result.shouldUpdate).toBe(false);
+
+      // If we DID update, the balance would be wrong:
+      const wrongBalance = result.newStartingBalance + result.transactionSum;
+      expect(wrongBalance).toBe(AKAHU_BALANCE); // math checks out for JUST these txns
+      // But Actual has ALL the old txns too, so displayed balance would be:
+      // wrongStartingBalance + oldTxns + newTxns ≠ akahuBalance
+    });
+
+    it("re-syncing from Jan 1 again SHOULD update starting balance", () => {
+      const txnsAll = [
+        { date: "2026-01-02", amount: -50000 },
+        { date: "2026-03-15", amount: -30000 },
+        { date: "2026-05-01", amount: 420280 },
+        { date: "2026-06-01", amount: -302533 },
+      ];
+
+      // Existing starting balance from first sync
+      const result = simulateSync(txnsAll, [], "2026-01-01");
+
+      // Should update: oldest txn (Jan 2) → balance date (Jan 1) <= existing (Jan 1)
+      expect(result.shouldUpdate).toBe(true);
+    });
+
+    it("wider lookback than original SHOULD update starting balance", () => {
+      // Original was from Jan 1, now syncing from Dec 1 (even further back)
+      const txns = [
+        { date: "2025-12-05", amount: -20000 }, // older than original
+        { date: "2026-01-02", amount: -50000 },
+        { date: "2026-06-01", amount: -302533 },
+      ];
+
+      const result = simulateSync(txns, [], "2026-01-01");
+
+      // Should update: oldest txn (Dec 5) → balance date (Dec 4) < existing (Jan 1)
+      expect(result.shouldUpdate).toBe(true);
+      expect(result.balanceDateStr).toBe("2025-12-04");
+    });
+  });
 });

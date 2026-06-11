@@ -336,16 +336,25 @@ async function syncAccount(
       const existingBalance = existingActualTxns.find((t) => t.imported_id === balanceImportedId);
 
       if (existingBalance) {
-        // Always update amount; only move date earlier, never forward
-        const newDate =
-          balanceDateStr < existingBalance.date ? balanceDateStr : existingBalance.date;
-        await api.updateTransaction(existingBalance.id, {
-          amount: startingBalance,
-          date: newDate,
-        });
-        console.log(
-          `[sync] Updated starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)} (date: ${newDate})`,
-        );
+        // Only update if the current sync covers back to the existing balance date.
+        // A narrower lookback (e.g. 30 days after a 180-day initial sync) doesn't
+        // have enough data to recalculate correctly.
+        if (shouldUpdateStartingBalance(balanceDateStr, existingBalance.date)) {
+          const newDate =
+            balanceDateStr < existingBalance.date ? balanceDateStr : existingBalance.date;
+          await api.updateTransaction(existingBalance.id, {
+            amount: startingBalance,
+            date: newDate,
+          });
+          console.log(
+            `[sync] Updated starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)} (date: ${newDate})`,
+          );
+        } else {
+          console.log(
+            `[sync] Skipping starting balance update for ${mapping.akahuAccountName}: ` +
+              `current lookback (${balanceDateStr}) doesn't cover existing balance (${existingBalance.date})`,
+          );
+        }
       } else {
         // Create new starting balance
         const categories = await api.getCategories();
