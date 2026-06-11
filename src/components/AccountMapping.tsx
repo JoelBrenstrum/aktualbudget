@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useReactTable, getCoreRowModel, flexRender, type ColumnDef } from "@tanstack/react-table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,8 +9,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { ArrowRight, Plus, Trash2, Link2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AppConfig, ActualAccount, AkahuAccount, AccountMappingItem } from "../App";
@@ -35,28 +44,21 @@ export function AccountMapping({
 }: Props) {
   const [mappings, setMappings] = useState<AccountMappingItem[]>(config.accountMappings);
   const [savedMappings, setSavedMappings] = useState(config.accountMappings);
+  const [saving, setSaving] = useState(false);
 
-  const addMapping = () => {
-    setMappings([
-      ...mappings,
-      {
-        actualAccountId: "",
-        actualAccountName: "",
-        akahuAccountId: "",
-        akahuAccountName: "",
-      },
-    ]);
-  };
-
-  const removeMapping = (index: number) => {
-    setMappings(mappings.filter((_, i) => i !== index));
+  const toggleEnabled = (index: number) => {
+    const updated = [...mappings];
+    updated[index] = {
+      ...updated[index],
+      enabled: mappings[index].enabled === false,
+    };
+    setMappings(updated);
   };
 
   const updateMapping = (index: number, field: "actual" | "akahu", id: string) => {
     const updated = [...mappings];
     if (field === "actual") {
       if (id === CREATE_NEW_VALUE) {
-        // Mark as pending creation — will be created on save
         updated[index] = {
           ...updated[index],
           actualAccountId: CREATE_NEW_VALUE,
@@ -86,7 +88,152 @@ export function AccountMapping({
     setMappings(updated);
   };
 
-  const [saving, setSaving] = useState(false);
+  const removeMapping = (index: number) => {
+    setMappings(mappings.filter((_, i) => i !== index));
+  };
+
+  const addMapping = () => {
+    setMappings([
+      ...mappings,
+      {
+        actualAccountId: "",
+        actualAccountName: "",
+        akahuAccountId: "",
+        akahuAccountName: "",
+        enabled: true,
+      },
+    ]);
+  };
+
+  const columns: ColumnDef<AccountMappingItem>[] = [
+    {
+      id: "enabled",
+      header: () => <span className="text-xs">Sync</span>,
+      size: 60,
+      cell: ({ row }) => (
+        <Switch
+          size="sm"
+          checked={row.original.enabled !== false}
+          onCheckedChange={() => toggleEnabled(row.index)}
+        />
+      ),
+    },
+    {
+      id: "akahu",
+      header: () => (
+        <span className="flex items-center gap-1.5 text-xs">
+          <img src="/akahu.svg" alt="Akahu" className="h-3.5 w-3.5" />
+          Akahu Account
+        </span>
+      ),
+      cell: ({ row }) => (
+        <Select
+          value={row.original.akahuAccountId}
+          onValueChange={(v) => v && updateMapping(row.index, "akahu", v)}
+        >
+          <SelectTrigger className="w-full h-8 text-xs">
+            <SelectValue placeholder="Select account...">
+              {row.original.akahuAccountName || row.original.akahuAccountId}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {akahuAccounts
+              .filter(
+                (a) =>
+                  a.id === row.original.akahuAccountId ||
+                  !mappings.some((m, i) => i !== row.index && m.akahuAccountId === a.id),
+              )
+              .map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                  {a.connection ? (
+                    <span className="ml-1 text-muted-foreground">— {a.connection}</span>
+                  ) : null}
+                  {a.balance != null ? (
+                    <span className="ml-1 text-muted-foreground">${a.balance.toFixed(2)}</span>
+                  ) : null}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      ),
+    },
+    {
+      id: "arrow",
+      header: () => null,
+      size: 32,
+      cell: () => <ArrowRight className="h-3 w-3 text-muted-foreground mx-auto" />,
+    },
+    {
+      id: "actual",
+      header: () => (
+        <span className="flex items-center gap-1.5 text-xs">
+          <img src="/actualbudget.png" alt="Actual Budget" className="h-3.5 w-3.5" />
+          Actual Budget Account
+        </span>
+      ),
+      cell: ({ row }) => (
+        <Select
+          value={row.original.actualAccountId}
+          onValueChange={(v) => v && updateMapping(row.index, "actual", v)}
+        >
+          <SelectTrigger className="w-full h-8 text-xs">
+            <SelectValue placeholder="Select account...">
+              {row.original.actualAccountId === CREATE_NEW_VALUE ? (
+                <span className="flex items-center gap-1 text-primary">
+                  <Plus className="h-3 w-3" />
+                  Create new account
+                </span>
+              ) : (
+                row.original.actualAccountName || row.original.actualAccountId
+              )}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {row.original.akahuAccountId && (
+              <SelectItem value={CREATE_NEW_VALUE} className="text-primary font-medium">
+                <Plus className="mr-1 inline h-3 w-3" />
+                Create new account
+              </SelectItem>
+            )}
+            {actualAccounts
+              .filter(
+                (a) =>
+                  a.id === row.original.actualAccountId ||
+                  !mappings.some((m, i) => i !== row.index && m.actualAccountId === a.id),
+              )
+              .map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                  {a.type ? <span className="ml-1 text-muted-foreground">({a.type})</span> : null}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      ),
+    },
+    {
+      id: "actions",
+      header: () => null,
+      size: 40,
+      cell: ({ row }) => (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => removeMapping(row.index)}
+          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      ),
+    },
+  ];
+
+  const table = useReactTable({
+    data: mappings,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   const saveMappings = async () => {
     const complete = mappings.filter(
@@ -99,7 +246,6 @@ export function AccountMapping({
 
     setSaving(true);
     try {
-      // Create any pending accounts
       const resolved = [...complete];
       for (let i = 0; i < resolved.length; i++) {
         if (resolved[i].actualAccountId !== CREATE_NEW_VALUE) continue;
@@ -154,9 +300,8 @@ export function AccountMapping({
   const validMappings = mappings.filter(
     (m) => (m.actualAccountId === CREATE_NEW_VALUE || m.actualAccountId) && m.akahuAccountId,
   );
-  const isDirty = JSON.stringify(validMappings) !== JSON.stringify(savedMappings);
+  const isDirty = JSON.stringify(mappings) !== JSON.stringify(savedMappings);
   const hasPendingCreations = mappings.some((m) => m.actualAccountId === CREATE_NEW_VALUE);
-
   const noAccounts = akahuAccounts.length === 0;
 
   return (
@@ -176,7 +321,7 @@ export function AccountMapping({
             </Badge>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
           {noAccounts && (
             <div className="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
               <p>Test your Akahu connection first to load account lists.</p>
@@ -187,121 +332,54 @@ export function AccountMapping({
           )}
 
           {!noAccounts && (
-            <>
-              {/* Column headers */}
-              <div className="hidden sm:flex items-center gap-3">
-                <div className="flex-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <img src="/akahu.svg" alt="Akahu" className="h-3.5 w-3.5" />
-                  Akahu Account
-                </div>
-                <div className="w-4" />
-                <div className="flex-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                  <img src="/actualbudget.png" alt="Actual Budget" className="h-3.5 w-3.5" />
-                  Actual Budget Account
-                </div>
-                <div className="w-9" />
+            <div className="space-y-4">
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <TableRow key={headerGroup.id}>
+                        {headerGroup.headers.map((header) => (
+                          <TableHead
+                            key={header.id}
+                            style={{
+                              width:
+                                header.column.getSize() !== 150
+                                  ? header.column.getSize()
+                                  : undefined,
+                            }}
+                          >
+                            {header.isPlaceholder
+                              ? null
+                              : flexRender(header.column.columnDef.header, header.getContext())}
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableHeader>
+                  <TableBody>
+                    {table.getRowModel().rows.length ? (
+                      table.getRowModel().rows.map((row) => (
+                        <TableRow
+                          key={row.id}
+                          className={row.original.enabled === false ? "opacity-50" : ""}
+                        >
+                          {row.getVisibleCells().map((cell) => (
+                            <TableCell key={cell.id}>
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={columns.length} className="h-16 text-center">
+                          No mappings yet. Click "Add Mapping" to get started.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
               </div>
-
-              {mappings.map((mapping, index) => (
-                <div key={index}>
-                  {index > 0 && <Separator className="mb-4" />}
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                    {/* Akahu Account (Left) */}
-                    <div className="min-w-0 flex-1">
-                      <Select
-                        value={mapping.akahuAccountId}
-                        onValueChange={(v) => v && updateMapping(index, "akahu", v)}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select account...">
-                            {mapping.akahuAccountName || mapping.akahuAccountId}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {akahuAccounts
-                            .filter(
-                              (a) =>
-                                a.id === mapping.akahuAccountId ||
-                                !mappings.some((m, i) => i !== index && m.akahuAccountId === a.id),
-                            )
-                            .map((a) => (
-                              <SelectItem key={a.id} value={a.id}>
-                                {a.name}
-                                {a.connection ? (
-                                  <span className="ml-1 text-muted-foreground">
-                                    — {a.connection}
-                                  </span>
-                                ) : null}
-                                {a.balance != null ? (
-                                  <span className="ml-1 text-muted-foreground">
-                                    ${a.balance.toFixed(2)}
-                                  </span>
-                                ) : null}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <ArrowRight className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
-
-                    {/* Actual Budget Account (Right) */}
-                    <div className="min-w-0 flex-1">
-                      <Select
-                        value={mapping.actualAccountId}
-                        onValueChange={(v) => v && updateMapping(index, "actual", v)}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select account...">
-                            {mapping.actualAccountId === CREATE_NEW_VALUE ? (
-                              <span className="flex items-center gap-1 text-primary">
-                                <Plus className="h-3 w-3" />
-                                Create new account
-                              </span>
-                            ) : (
-                              mapping.actualAccountName || mapping.actualAccountId
-                            )}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {mapping.akahuAccountId && (
-                            <SelectItem
-                              value={CREATE_NEW_VALUE}
-                              className="text-primary font-medium"
-                            >
-                              <Plus className="mr-1 inline h-3 w-3" />
-                              Create new account
-                            </SelectItem>
-                          )}
-                          {actualAccounts
-                            .filter(
-                              (a) =>
-                                a.id === mapping.actualAccountId ||
-                                !mappings.some((m, i) => i !== index && m.actualAccountId === a.id),
-                            )
-                            .map((a) => (
-                              <SelectItem key={a.id} value={a.id}>
-                                {a.name}
-                                {a.type ? (
-                                  <span className="ml-1 text-muted-foreground">({a.type})</span>
-                                ) : null}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeMapping(index)}
-                      className="self-end shrink-0 text-muted-foreground hover:text-destructive sm:self-center"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
 
               <Button variant="outline" onClick={addMapping} className="w-full gap-2">
                 <Plus className="h-4 w-4" /> Add Mapping
@@ -309,7 +387,7 @@ export function AccountMapping({
               <p className="text-xs text-muted-foreground">
                 New accounts created via "Create new account" are added as on-budget by default.
               </p>
-            </>
+            </div>
           )}
         </CardContent>
       </Card>

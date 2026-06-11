@@ -135,8 +135,10 @@ app.post("/api/akahu/test", async (req, res) => {
 app.post("/api/sync/run", async (req, res) => {
   const config = loadConfig();
   const syncDays = req.body?.syncDays ?? 30;
+  const cleanupManual = req.body?.cleanupManual ?? false;
+  const startDate = req.body?.startDate as string | undefined;
   try {
-    const result = await runSync(config, syncDays);
+    const result = await runSync(config, syncDays, "manual", cleanupManual, startDate);
     res.json({ success: true, result });
   } catch (error) {
     res.status(400).json({

@@ -18,6 +18,7 @@ export interface AccountMapping {
   actualAccountName: string;
   akahuAccountId: string;
   akahuAccountName: string;
+  enabled?: boolean;
 }
 
 export interface ScheduleConfig {
@@ -31,6 +32,7 @@ export interface AccountSyncResult {
   akahuAccountName: string;
   imported: number;
   updated: number;
+  deleted: number;
   status: "success" | "error";
   error?: string;
 }

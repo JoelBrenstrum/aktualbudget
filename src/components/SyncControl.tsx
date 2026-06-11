@@ -38,13 +38,16 @@ const SYNC_DAYS_OPTIONS: Record<string, string> = {
   "90": "90 days",
   "180": "180 days",
   "365": "1 year",
+  custom: "Custom date",
 };
 
 export function SyncControl({ config, onSave, onRefresh }: Props) {
   const [syncing, setSyncing] = useState(false);
   const [syncDays, setSyncDays] = useState(String(config.schedule.syncDays ?? 30));
+  const [customDate, setCustomDate] = useState("");
   const [scheduleEnabled, setScheduleEnabled] = useState(config.schedule.enabled);
   const [interval, setInterval] = useState(config.schedule.interval);
+  const [cleanupManual, setCleanupManual] = useState(false);
 
   const runSync = async () => {
     setSyncing(true);
@@ -52,7 +55,11 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
       const res = await fetch("/api/sync/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ syncDays: Number(syncDays) }),
+        body: JSON.stringify({
+          syncDays: Number(syncDays) || 30,
+          cleanupManual,
+          ...(syncDays === "custom" && customDate ? { startDate: customDate } : {}),
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -113,6 +120,14 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
                 ))}
               </SelectContent>
             </Select>
+            {syncDays === "custom" && (
+              <Input
+                type="date"
+                value={customDate}
+                onChange={(e) => setCustomDate(e.target.value)}
+                max={new Date().toISOString().split("T")[0]}
+              />
+            )}
             <p className="text-xs text-muted-foreground">
               How far back to fetch transactions from Akahu
             </p>
@@ -201,9 +216,19 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
                 )}
                 {syncing ? "Syncing..." : "Sync Now"}
               </Button>
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm">Remove manual transactions</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Delete transactions not created by sync
+                  </p>
+                </div>
+                <Switch size="sm" checked={cleanupManual} onCheckedChange={setCleanupManual} />
+              </div>
               <p className="text-xs text-center text-muted-foreground">
-                Uses the {SYNC_DAYS_OPTIONS[syncDays] || `${syncDays} days`} lookback period
-                configured above
+                {syncDays === "custom" && customDate
+                  ? `Fetching transactions from ${customDate}`
+                  : `Uses the ${SYNC_DAYS_OPTIONS[syncDays] || `${syncDays} days`} lookback period configured above`}
               </p>
             </div>
           )}
@@ -251,6 +276,9 @@ function SyncHistoryCard({ entry, isLatest }: { entry: SyncHistoryEntry; isLates
           )}
           <span className="font-medium">
             {totalImported} imported, {totalUpdated} updated
+            {entry.accounts.some((a) => a.deleted > 0)
+              ? `, ${entry.accounts.reduce((s, a) => s + a.deleted, 0)} deleted`
+              : ""}
           </span>
           <Badge variant="outline" className="text-xs">
             {entry.trigger === "scheduled" ? "Scheduled" : "Manual"}

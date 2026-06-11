@@ -126,6 +126,46 @@ export function mapTransaction(
   };
 }
 
+/**
+ * Calculate the starting balance needed so that:
+ * startingBalance + sum(syncedTransactions) = currentBalance
+ *
+ * @param akahuBalanceCents - Current Akahu balance in cents
+ * @param transactionSumCents - Sum of all synced transaction amounts in cents
+ */
+export function calculateStartingBalance(
+  akahuBalanceCents: number,
+  transactionSumCents: number,
+): number {
+  return akahuBalanceCents - transactionSumCents;
+}
+
+/**
+ * Determine if the starting balance should be updated.
+ * Only update when synced transactions exist that are older than
+ * (or equal to) the existing starting balance date.
+ * Always update if there's no existing starting balance.
+ *
+ * @param oldestTransactionDate - Oldest synced transaction date (YYYY-MM-DD)
+ * @param existingBalanceDate - Current starting balance date (YYYY-MM-DD), or undefined if none
+ */
+export function shouldUpdateStartingBalance(
+  oldestTransactionDate: string,
+  existingBalanceDate: string | undefined,
+): boolean {
+  if (!existingBalanceDate) return true;
+  return oldestTransactionDate <= existingBalanceDate;
+}
+
+/**
+ * Get the date for the starting balance: 1 day before the oldest transaction.
+ */
+export function getStartingBalanceDate(oldestTransactionDate: string): string {
+  const d = new Date(oldestTransactionDate);
+  d.setDate(d.getDate() - 1);
+  return toLocalDateStr(d.toISOString());
+}
+
 async function buildTransferLookup(
   config: AppConfig,
   akahuAccounts: Account[],
@@ -158,10 +198,23 @@ async function syncAccount(
   syncDays: number,
   transferLookup: TransferLookup,
   akahuBalance: number | undefined,
+  cleanupManual = false,
+  startDateOverride?: string,
 ): Promise<AccountSyncResult> {
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - syncDays);
-  const startDateStr = toLocalDateStr(startDate.toISOString());
+  const startDateStr =
+    startDateOverride ??
+    (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - syncDays);
+      return toLocalDateStr(d.toISOString());
+    })();
+
+  // Akahu's `start` param is exclusive, so subtract 1 day to include the target date
+  const akahuStartDate = (() => {
+    const d = new Date(startDateStr + "T00:00:00");
+    d.setDate(d.getDate() - 1);
+    return toLocalDateStr(d.toISOString());
+  })();
 
   try {
     // Fetch settled transactions with pagination
@@ -170,7 +223,7 @@ async function syncAccount(
 
     do {
       const page = await client.accounts.listTransactions(userToken, mapping.akahuAccountId, {
-        start: startDateStr,
+        start: akahuStartDate,
         cursor: cursor ?? undefined,
       });
       allTransactions.push(...page.items);
@@ -212,45 +265,94 @@ async function syncAccount(
       `[sync] ${mapping.akahuAccountName}: ${allTransactions.length} txns, ${transferCount} mapped as transfers`,
     );
 
-    const result = await api.importTransactions(mapping.actualAccountId, actualTransactions);
+    // Deduplicate: filter out Akahu transactions that match existing transfers in Actual.
+    // This prevents double-counting when e.g. a credit card payment creates a transfer
+    // counterpart from another account, and Akahu also reports the same payment.
+    const today = toLocalDateStr(new Date().toISOString());
+    const existingActualTxns = await api.getTransactions(
+      mapping.actualAccountId,
+      "2000-01-01",
+      today,
+    );
+    const existingTransfers = existingActualTxns.filter((t) => t.transfer_id && !t.imported_id);
 
-    // Always update starting balance: recalculate and date before oldest transaction
+    let deduped = 0;
+    const filteredTransactions = actualTransactions.filter((t) => {
+      // Only check for duplicates on transactions that aren't already mapped as transfers
+      if (t.payee) return true;
+
+      const isDuplicate = existingTransfers.some(
+        (et) => et.date === t.date && et.amount === t.amount,
+      );
+      if (isDuplicate) {
+        deduped++;
+        console.log(
+          `[sync] Skipping duplicate transfer: ${t.payee_name} $${(t.amount / 100).toFixed(2)} on ${t.date}`,
+        );
+      }
+      return !isDuplicate;
+    });
+
+    if (deduped > 0) {
+      console.log(`[sync] ${mapping.akahuAccountName}: filtered ${deduped} duplicate transfer(s)`);
+    }
+
+    const result = await api.importTransactions(mapping.actualAccountId, filteredTransactions);
+
+    // Update starting balance from Akahu transactions (excluding deduped transfers)
     const balanceImportedId = `aktualsync-starting-balance-${mapping.akahuAccountId}`;
-    if (akahuBalance != null && actualTransactions.length > 0) {
-      const transactionSum = actualTransactions.reduce((sum, t) => sum + (t.amount ?? 0), 0);
-      const startingBalance = Math.round(akahuBalance * 100) - transactionSum;
+    if (akahuBalance != null) {
+      // Sum imported txns + existing transfer counterparts (which we skipped importing)
+      const importedSum = filteredTransactions.reduce((sum, t) => sum + (t.amount ?? 0), 0);
+      const transferSum = existingTransfers.reduce((sum, t) => sum + t.amount, 0);
+      const transactionSum = importedSum + transferSum;
+      const startingBalance = calculateStartingBalance(
+        Math.round(akahuBalance * 100),
+        transactionSum,
+      );
 
-      // Find the oldest transaction date and go 1 day before it
-      const oldestDate = actualTransactions.reduce((oldest, t) => {
-        return t.date < oldest ? t.date : oldest;
-      }, actualTransactions[0].date);
-      const balanceDate = new Date(oldestDate);
-      balanceDate.setDate(balanceDate.getDate() - 1);
-      const balanceDateStr = toLocalDateStr(balanceDate.toISOString());
+      // Find oldest date from ALL Akahu transactions (not just filtered),
+      // because deduped transfers still represent real transactions that
+      // the starting balance must precede.
+      const allDates = [
+        ...actualTransactions.map((t) => t.date),
+        ...existingTransfers.map((t) => t.date),
+      ];
+      const balanceDateStr =
+        allDates.length > 0
+          ? getStartingBalanceDate(
+              allDates.reduce((oldest, d) => (d < oldest ? d : oldest), allDates[0]),
+            )
+          : today;
 
-      // Find the "Starting Balances" category
-      const categories = await api.getCategories();
-      const startingBalancesCat = categories.find(
-        (c) => "name" in c && c.name === "Starting Balances",
+      console.log(
+        `[sync] Starting balance calc for ${mapping.akahuAccountName}: ` +
+          `akahuBalance=$${akahuBalance.toFixed(2)}, importedSum=$${(importedSum / 100).toFixed(2)}, ` +
+          `transferSum=$${(transferSum / 100).toFixed(2)}, ` +
+          `startingBalance=$${(startingBalance / 100).toFixed(2)}, txnCount=${filteredTransactions.length}+${existingTransfers.length}`,
       );
 
       // Check if starting balance transaction already exists
-      const today = toLocalDateStr(new Date().toISOString());
-      const existingTxns = await api.getTransactions(mapping.actualAccountId, "2000-01-01", today);
-      const existingBalance = existingTxns.find((t) => t.imported_id === balanceImportedId);
+      const existingBalance = existingActualTxns.find((t) => t.imported_id === balanceImportedId);
 
       if (existingBalance) {
-        // Update existing starting balance
+        // Always update amount; only move date earlier, never forward
+        const newDate =
+          balanceDateStr < existingBalance.date ? balanceDateStr : existingBalance.date;
         await api.updateTransaction(existingBalance.id, {
           amount: startingBalance,
-          date: balanceDateStr,
-          category: startingBalancesCat?.id,
+          date: newDate,
         });
         console.log(
-          `[sync] Updated starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)}`,
+          `[sync] Updated starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)} (date: ${newDate})`,
         );
       } else {
         // Create new starting balance
+        const categories = await api.getCategories();
+        const startingBalancesCat = categories.find(
+          (c) => "name" in c && c.name === "Starting Balances",
+        );
+
         await api.importTransactions(mapping.actualAccountId, [
           {
             account: mapping.actualAccountId,
@@ -264,7 +366,24 @@ async function syncAccount(
           },
         ]);
         console.log(
-          `[sync] Added starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)}`,
+          `[sync] Added starting balance for ${mapping.akahuAccountName}: $${(startingBalance / 100).toFixed(2)} (date: ${balanceDateStr})`,
+        );
+      }
+    }
+
+    // Cleanup manual transactions if enabled
+    let deletedCount = 0;
+    if (cleanupManual) {
+      const today = toLocalDateStr(new Date().toISOString());
+      const allTxns = await api.getTransactions(mapping.actualAccountId, "2000-01-01", today);
+      const manualTxns = allTxns.filter((t) => !t.imported_id && !t.transfer_id);
+      for (const t of manualTxns) {
+        await api.deleteTransaction(t.id);
+        deletedCount++;
+      }
+      if (deletedCount > 0) {
+        console.log(
+          `[sync] Cleaned up ${deletedCount} manual transactions from ${mapping.actualAccountName}`,
         );
       }
     }
@@ -274,6 +393,7 @@ async function syncAccount(
       akahuAccountName: mapping.akahuAccountName,
       imported: result.added?.length ?? 0,
       updated: result.updated?.length ?? 0,
+      deleted: deletedCount,
       status: "success",
     };
   } catch (error) {
@@ -282,6 +402,7 @@ async function syncAccount(
       akahuAccountName: mapping.akahuAccountName,
       imported: 0,
       updated: 0,
+      deleted: 0,
       status: "error",
       error: error instanceof Error ? error.message : String(error),
     };
@@ -299,6 +420,8 @@ export async function runSync(
   config: AppConfig,
   syncDays = 30,
   trigger: "manual" | "scheduled" = "manual",
+  cleanupManual = false,
+  startDate?: string,
 ): Promise<SyncHistoryEntry> {
   if (isSyncing) {
     throw new Error("Sync is already running");
@@ -337,6 +460,10 @@ export async function runSync(
 
     const results: AccountSyncResult[] = [];
     for (const mapping of config.accountMappings) {
+      if (mapping.enabled === false) {
+        console.log(`[sync] Skipping disabled account: ${mapping.akahuAccountName}`);
+        continue;
+      }
       const akahuAccount = akahuAccounts.find((a) => a._id === mapping.akahuAccountId);
       const result = await syncAccount(
         client,
@@ -345,12 +472,38 @@ export async function runSync(
         syncDays,
         transferLookup,
         akahuAccount?.balance?.current,
+        cleanupManual,
+        startDate,
       );
       results.push(result);
       console.log(
         `[sync] ${mapping.akahuAccountName} → ${mapping.actualAccountName}: ` +
-          `${result.imported} imported, ${result.updated} updated (${result.status})`,
+          `${result.imported} imported, ${result.updated} updated, ${result.deleted} deleted (${result.status})`,
       );
+    }
+
+    // Post-sync cleanup: remove imported transactions that duplicate transfer counterparts.
+    // This catches cases where the pre-import dedup missed (e.g. credit card synced before
+    // the source account, so no transfer existed yet during the credit card's sync).
+    const enabledMappings = config.accountMappings.filter((m) => m.enabled !== false);
+    const today = toLocalDateStr(new Date().toISOString());
+    for (const mapping of enabledMappings) {
+      const txns = await api.getTransactions(mapping.actualAccountId, "2000-01-01", today);
+      const transfers = txns.filter((t) => t.transfer_id && !t.imported_id);
+      const imported = txns.filter((t) => t.imported_id && !t.transfer_id);
+
+      for (const transfer of transfers) {
+        const duplicate = imported.find(
+          (t) => t.date === transfer.date && t.amount === transfer.amount,
+        );
+        if (duplicate) {
+          await api.deleteTransaction(duplicate.id);
+          console.log(
+            `[sync] Post-sync cleanup: removed duplicate on ${mapping.actualAccountName}: ` +
+              `$${(duplicate.amount / 100).toFixed(2)} on ${duplicate.date} (kept transfer)`,
+          );
+        }
+      }
     }
 
     await api.shutdown();
