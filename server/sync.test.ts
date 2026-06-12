@@ -4,6 +4,8 @@ import {
   toLocalDateStr,
   getMerchantName,
   getOtherAccount,
+  getCardSuffix,
+  getPayeeAndNotes,
   mapTransaction,
   calculateStartingBalance,
   shouldUpdateStartingBalance,
@@ -50,6 +52,7 @@ function enrichedTxn(
 
 const emptyLookup: TransferLookup = {
   bankNumberToActualId: new Map(),
+  cardSuffixToActualId: new Map(),
   actualIdToTransferPayeeId: new Map(),
 };
 
@@ -96,13 +99,149 @@ describe("getOtherAccount", () => {
   });
 
   it("returns other_account from meta", () => {
-    const t = enrichedTxn({}, undefined, { other_account: "02-0256-0116381-07" });
-    expect(getOtherAccount(t)).toBe("02-0256-0116381-07");
+    const t = enrichedTxn({}, undefined, { other_account: "02-0100-0100001-07" });
+    expect(getOtherAccount(t)).toBe("02-0100-0100001-07");
   });
 
   it("returns undefined when meta has no other_account", () => {
     const t = enrichedTxn({}, undefined, {});
     expect(getOtherAccount(t)).toBeUndefined();
+  });
+});
+
+// --- getCardSuffix ---
+
+describe("getCardSuffix", () => {
+  it("returns undefined for raw transactions", () => {
+    expect(getCardSuffix(rawTxn())).toBeUndefined();
+  });
+
+  it("returns card_suffix from meta", () => {
+    const t = rawTxn();
+    (t as any).meta = { card_suffix: "4321" };
+    expect(getCardSuffix(t)).toBe("4321");
+  });
+
+  it("returns undefined when meta has no card_suffix", () => {
+    const t = enrichedTxn({}, undefined, {});
+    expect(getCardSuffix(t)).toBeUndefined();
+  });
+});
+
+// --- getPayeeAndNotes (BNZ description cleanup) ---
+
+describe("getPayeeAndNotes", () => {
+  it("strips particulars and reference from payment description", () => {
+    const t = enrichedTxn({ description: "Acme Utilities Ltd Water INV99201" }, undefined, {
+      other_account: "01-0200-0100001-00",
+    });
+    (t as any).meta.particulars = "Water";
+    (t as any).meta.reference = "INV99201";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("Acme Utilities Ltd");
+    expect(result.notes).toBe("Water | INV99201");
+  });
+
+  it("strips particulars and code from standing order description", () => {
+    const t = enrichedTxn({ description: "SMITH, JANE A Jane rent Xx" }, undefined, {
+      other_account: "02-0200-0200002-03",
+    });
+    (t as any).meta.particulars = "Jane rent";
+    (t as any).meta.code = "Xx";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("SMITH, JANE A");
+    expect(result.notes).toBe("Jane rent | Xx");
+  });
+
+  it("uses merchant name when available, meta fields as notes", () => {
+    const t = enrichedTxn(
+      { description: "Acme Property Mgmt Rent T100200" },
+      { _id: "merchant_123", name: "Acme Property Management Ltd" },
+      { other_account: "12-3000-0030003-00" },
+    );
+    (t as any).meta.particulars = "Rent";
+    (t as any).meta.reference = "T100200";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("Acme Property Management Ltd");
+    expect(result.notes).toBe("Rent | T100200");
+  });
+
+  it("falls back to full description when no meta fields", () => {
+    const t = rawTxn({ description: "COUNTDOWN AUCKLAND" });
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("COUNTDOWN AUCKLAND");
+    expect(result.notes).toBe("COUNTDOWN AUCKLAND");
+  });
+
+  it("handles description that is entirely meta fields", () => {
+    const t = enrichedTxn({ description: "Rent T100200" }, undefined, {});
+    (t as any).meta.particulars = "Rent";
+    (t as any).meta.reference = "T100200";
+
+    const result = getPayeeAndNotes(t);
+    // Falls back to original since stripping leaves nothing
+    expect(result.payee).toBe("Rent T100200");
+  });
+
+  it("strips particulars and code from salary direct credit", () => {
+    const t = enrichedTxn(
+      { description: "GLOBEX CORP LIMIT J Smith Salary", type: "DIRECT CREDIT" },
+      undefined,
+      { other_account: "12-3000-0080008-00" },
+    );
+    (t as any).meta.particulars = "J Smith";
+    (t as any).meta.code = "Salary";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("GLOBEX CORP LIMIT");
+    expect(result.notes).toBe("J Smith | Salary");
+  });
+
+  it("handles meta field word appearing in payee name", () => {
+    // "OAKWOOD" is both in the payee name AND meta.code
+    const t = enrichedTxn(
+      { description: "OAKWOOD TRUST OAKWOOD SALARY", type: "DIRECT CREDIT" },
+      undefined,
+      { other_account: "06-0100-0800008-00" },
+    );
+    (t as any).meta.code = "OAKWOOD";
+    (t as any).meta.reference = "SALARY";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("OAKWOOD TRUST");
+    expect(result.notes).toBe("OAKWOOD | SALARY");
+  });
+
+  it("strips particulars-only suffix from standing order", () => {
+    const t = enrichedTxn(
+      { description: "Investco INVX000351", type: "STANDING ORDER" },
+      undefined,
+      { other_account: "04-2000-0300003-06" },
+    );
+    (t as any).meta.particulars = "INVX000351";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("Investco");
+    expect(result.notes).toBe("INVX000351");
+  });
+
+  it("strips store number, city, and card reference from EFTPOS", () => {
+    // EFTPOS with store number as particulars, city as code, card ref as reference
+    const t = enrichedTxn(
+      { description: "NORTHSIDE SUPERETTE 7839 WELLINGTON 492102011344", type: "EFTPOS" },
+      undefined,
+      {},
+    );
+    (t as any).meta.particulars = "7839";
+    (t as any).meta.code = "WELLINGTON";
+    (t as any).meta.reference = "492102011344";
+
+    const result = getPayeeAndNotes(t);
+    expect(result.payee).toBe("NORTHSIDE SUPERETTE");
+    expect(result.notes).toBe("7839 | WELLINGTON | 492102011344");
   });
 });
 
@@ -118,7 +257,7 @@ describe("mapTransaction", () => {
     expect(result.account).toBe(accountId);
     expect(result.amount).toBe(-4250);
     expect(result.payee_name).toBe("COUNTDOWN AUCKLAND");
-    expect(result.notes).toBeUndefined();
+    expect(result.notes).toBe("COUNTDOWN AUCKLAND");
     expect(result.imported_id).toBe("txn_abc123");
     expect(result.cleared).toBe(true);
     expect(result.payee).toBeUndefined();
@@ -140,7 +279,7 @@ describe("mapTransaction", () => {
     const result = mapTransaction(t, accountId, emptyLookup);
 
     expect(result.payee_name).toBe("SOME PAYMENT");
-    expect(result.notes).toBeUndefined();
+    expect(result.notes).toBe("SOME PAYMENT");
   });
 
   it("converts amount to cents (integer)", () => {
@@ -152,8 +291,12 @@ describe("mapTransaction", () => {
   describe("transfer detection", () => {
     const transferLookup: TransferLookup = {
       bankNumberToActualId: new Map([
-        ["02-0256-0116381-07", "actual-acc-savings"],
-        ["12-3107-0086725-00", "actual-acc-credit"],
+        ["02-0100-0100001-07", "actual-acc-savings"],
+        ["12-3000-0080008-00", "actual-acc-credit"],
+      ]),
+      cardSuffixToActualId: new Map([
+        ["0001", "actual-acc-savings"],
+        ["8000", "actual-acc-credit"],
       ]),
       actualIdToTransferPayeeId: new Map([
         ["actual-acc-savings", "payee-transfer-savings"],
@@ -163,7 +306,7 @@ describe("mapTransaction", () => {
 
     it("detects transfer when other_account matches mapped account", () => {
       const t = enrichedTxn({ type: "TRANSFER", description: "Transfer to Savings" }, undefined, {
-        other_account: "02-0256-0116381-07",
+        other_account: "02-0100-0100001-07",
       });
       const result = mapTransaction(t, accountId, transferLookup);
 
@@ -176,7 +319,7 @@ describe("mapTransaction", () => {
       const t = enrichedTxn(
         { type: "STANDING ORDER" as Transaction["type"], description: "Auto transfer" },
         undefined,
-        { other_account: "12-3107-0086725-00" },
+        { other_account: "12-3000-0080008-00" },
       );
       const result = mapTransaction(t, accountId, transferLookup);
 
@@ -188,7 +331,7 @@ describe("mapTransaction", () => {
       const t = enrichedTxn(
         { type: "DIRECT CREDIT" as Transaction["type"], description: "Incoming" },
         undefined,
-        { other_account: "02-0256-0116381-07" },
+        { other_account: "02-0100-0100001-07" },
       );
       const result = mapTransaction(t, accountId, transferLookup);
 
@@ -224,6 +367,90 @@ describe("mapTransaction", () => {
       expect(result.payee).toBeUndefined();
       expect(result.payee_name).toBe("My Savings");
       expect(result.notes).toBe("PAY 12345");
+    });
+
+    describe("ANZ card suffix fallback", () => {
+      // ANZ transfers don't provide meta.other_account.
+      // Instead, both sides share meta.card_suffix identifying the credit card.
+      // The debit side's card_suffix points to the CC account.
+
+      const anzLookup: TransferLookup = {
+        bankNumberToActualId: new Map([
+          ["11-2222-3333333-44", "actual-anz-freedom"],
+          ["4999-****-****-7612", "actual-anz-visa"],
+        ]),
+        cardSuffixToActualId: new Map([
+          ["3344", "actual-anz-freedom"],
+          ["7612", "actual-anz-visa"],
+        ]),
+        actualIdToTransferPayeeId: new Map([
+          ["actual-anz-freedom", "payee-transfer-freedom"],
+          ["actual-anz-visa", "payee-transfer-visa"],
+        ]),
+      };
+
+      it("detects transfer from debit account via card_suffix", () => {
+        // Freedom account sends money to Visa CC (card suffix identifies CC)
+        const t = rawTxn({
+          _id: "trans_anz_debit_001",
+          _account: "acc_anz_freedom",
+          type: "TRANSFER",
+          description: "To: 4999-****-****-7612 Debit Transfer 334455",
+          amount: -315.75,
+        });
+        (t as any).meta = { card_suffix: "7612" };
+
+        const result = mapTransaction(t, "actual-anz-freedom", anzLookup);
+
+        expect(result.payee).toBe("payee-transfer-visa");
+        expect(result.payee_name).toBeUndefined();
+        expect(result.amount).toBe(-31575);
+        expect(result.notes).toBe("To: 4999-****-****-7612 Debit Transfer 334455");
+      });
+
+      it("does not self-match card_suffix on credit card side", () => {
+        // Visa CC receives payment — its own card_suffix matches itself, should NOT self-match
+        const t = rawTxn({
+          _id: "trans_anz_credit_001",
+          _account: "acc_anz_visa",
+          type: "CREDIT" as Transaction["type"],
+          description: "Online Payment - Thank You",
+          amount: 315.75,
+        });
+        (t as any).meta = { card_suffix: "7612" };
+
+        const result = mapTransaction(t, "actual-anz-visa", anzLookup);
+
+        // Should NOT be a transfer (card_suffix matches self)
+        expect(result.payee).toBeUndefined();
+        expect(result.payee_name).toBe("Online Payment - Thank You");
+        expect(result.amount).toBe(31575);
+      });
+
+      it("prefers other_account over card_suffix when both exist", () => {
+        const t = enrichedTxn({ type: "TRANSFER", description: "Transfer" }, undefined, {
+          other_account: "11-2222-3333333-44",
+        });
+        (t as any).meta.card_suffix = "7612";
+
+        const result = mapTransaction(t, "actual-anz-visa", anzLookup);
+
+        // Should match via other_account, not card_suffix
+        expect(result.payee).toBe("payee-transfer-freedom");
+      });
+
+      it("falls back to payee_name when card_suffix has no mapped account", () => {
+        const t = rawTxn({
+          type: "TRANSFER",
+          description: "Transfer to unknown card",
+        });
+        (t as any).meta = { card_suffix: "9999" };
+
+        const result = mapTransaction(t, "actual-anz-freedom", anzLookup);
+
+        expect(result.payee).toBeUndefined();
+        expect(result.payee_name).toBe("Transfer to unknown card");
+      });
     });
   });
 });
@@ -408,7 +635,7 @@ describe("Starting Balance", () => {
   });
 
   describe("sequential sync: wide then narrow lookback", () => {
-    const AKAHU_BALANCE = -357555; // -$3575.55
+    const AKAHU_BALANCE = -250000; // -$2500.00
 
     // Simulate what syncAccount does for starting balance
     function simulateSync(
@@ -438,12 +665,11 @@ describe("Starting Balance", () => {
     }
 
     it("initial sync from Jan 1 → creates starting balance", () => {
-      // 6 months of transactions: sum = $377.47 (mix of debits and credits)
       const txns = [
-        { date: "2026-01-02", amount: -50000 },
-        { date: "2026-03-15", amount: -30000 },
-        { date: "2026-05-01", amount: 420280 }, // payment
-        { date: "2026-06-01", amount: -302533 },
+        { date: "2026-01-02", amount: -40000 },
+        { date: "2026-03-15", amount: -25000 },
+        { date: "2026-05-01", amount: 300000 }, // payment
+        { date: "2026-06-01", amount: -185000 },
       ];
 
       const result = simulateSync(txns, [], undefined);
@@ -476,10 +702,10 @@ describe("Starting Balance", () => {
 
     it("re-syncing from Jan 1 again SHOULD update starting balance", () => {
       const txnsAll = [
-        { date: "2026-01-02", amount: -50000 },
-        { date: "2026-03-15", amount: -30000 },
-        { date: "2026-05-01", amount: 420280 },
-        { date: "2026-06-01", amount: -302533 },
+        { date: "2026-01-02", amount: -40000 },
+        { date: "2026-03-15", amount: -25000 },
+        { date: "2026-05-01", amount: 300000 },
+        { date: "2026-06-01", amount: -185000 },
       ];
 
       // Existing starting balance from first sync
@@ -492,9 +718,9 @@ describe("Starting Balance", () => {
     it("wider lookback than original SHOULD update starting balance", () => {
       // Original was from Jan 1, now syncing from Dec 1 (even further back)
       const txns = [
-        { date: "2025-12-05", amount: -20000 }, // older than original
-        { date: "2026-01-02", amount: -50000 },
-        { date: "2026-06-01", amount: -302533 },
+        { date: "2025-12-05", amount: -15000 }, // older than original
+        { date: "2026-01-02", amount: -40000 },
+        { date: "2026-06-01", amount: -185000 },
       ];
 
       const result = simulateSync(txns, [], "2026-01-01");

@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import api from "@actual-app/api";
@@ -7,9 +8,24 @@ import { loadConfig, saveConfig, getDataDir, type AppConfig } from "./config.js"
 import { fetchActualAccounts, fetchAkahuAccounts, runSync, getSyncStatus } from "./sync.js";
 import { initScheduler, startSchedule, stopSchedule } from "./scheduler.js";
 
+// Tee console output to a log file in the data directory
+const LOG_DIR = path.resolve(process.cwd(), "data");
+if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+const logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
+const origLog = console.log.bind(console);
+const origError = console.error.bind(console);
+console.log = (...args: unknown[]) => {
+  origLog(...args);
+  logStream.write(`${new Date().toISOString()} [LOG] ${args.map(String).join(" ")}\n`);
+};
+console.error = (...args: unknown[]) => {
+  origError(...args);
+  logStream.write(`${new Date().toISOString()} [ERR] ${args.map(String).join(" ")}\n`);
+};
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3100;
 
 app.use(cors());
 app.use(express.json());
@@ -136,9 +152,17 @@ app.post("/api/sync/run", async (req, res) => {
   const config = loadConfig();
   const syncDays = req.body?.syncDays ?? 30;
   const cleanupManual = req.body?.cleanupManual ?? false;
+  const refreshPayees = req.body?.refreshPayees ?? false;
   const startDate = req.body?.startDate as string | undefined;
   try {
-    const result = await runSync(config, syncDays, "manual", cleanupManual, startDate);
+    const result = await runSync(
+      config,
+      syncDays,
+      "manual",
+      cleanupManual,
+      startDate,
+      refreshPayees,
+    );
     res.json({ success: true, result });
   } catch (error) {
     res.status(400).json({

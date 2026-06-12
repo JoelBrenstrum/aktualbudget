@@ -48,6 +48,7 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
   const [scheduleEnabled, setScheduleEnabled] = useState(config.schedule.enabled);
   const [interval, setInterval] = useState(config.schedule.interval);
   const [cleanupManual, setCleanupManual] = useState(false);
+  const [refreshPayees, setRefreshPayees] = useState(false);
 
   const runSync = async () => {
     setSyncing(true);
@@ -58,6 +59,7 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
         body: JSON.stringify({
           syncDays: Number(syncDays) || 30,
           cleanupManual,
+          refreshPayees,
           ...(syncDays === "custom" && customDate ? { startDate: customDate } : {}),
         }),
       });
@@ -224,6 +226,15 @@ export function SyncControl({ config, onSave, onRefresh }: Props) {
                   </p>
                 </div>
                 <Switch size="sm" checked={cleanupManual} onCheckedChange={setCleanupManual} />
+              </div>
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <div className="space-y-0.5">
+                  <Label className="text-sm">Refresh payee names</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Update existing transactions with cleaner payee names
+                  </p>
+                </div>
+                <Switch size="sm" checked={refreshPayees} onCheckedChange={setRefreshPayees} />
               </div>
               <p className="text-xs text-center text-muted-foreground">
                 {syncDays === "custom" && customDate

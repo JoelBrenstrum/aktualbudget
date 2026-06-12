@@ -27,6 +27,14 @@ export interface ScheduleConfig {
   syncDays: number;
 }
 
+export interface BalanceValidation {
+  akahuBalanceCents: number;
+  actualBalanceCents: number;
+  diffCents: number;
+  matched: boolean;
+  diagnosis: string[];
+}
+
 export interface AccountSyncResult {
   actualAccountName: string;
   akahuAccountName: string;
@@ -35,6 +43,7 @@ export interface AccountSyncResult {
   deleted: number;
   status: "success" | "error";
   error?: string;
+  balanceValidation?: BalanceValidation;
 }
 
 export interface SyncHistoryEntry {

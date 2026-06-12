@@ -64,6 +64,54 @@ export function getMerchantName(t: Transaction): string | undefined {
   return undefined;
 }
 
+/**
+ * Extract a clean payee name and notes from an Akahu transaction.
+ *
+ * BNZ descriptions contain the payee name + meta fields mashed together,
+ * e.g. "Abel Software Limite Water CINV37202" where "Water" is
+ * meta.particulars and "CINV37202" is meta.reference.
+ *
+ * This strips meta fields from the description to get a clean payee,
+ * and builds structured notes from the meta info.
+ */
+export function getPayeeAndNotes(t: Transaction): { payee: string; notes: string } {
+  const merchantName = getMerchantName(t);
+  const meta = "meta" in t ? (t.meta as Record<string, string> | undefined) : undefined;
+
+  // Build notes from meta fields
+  const noteParts: string[] = [];
+  if (meta?.particulars) noteParts.push(meta.particulars);
+  if (meta?.code) noteParts.push(meta.code);
+  if (meta?.reference) noteParts.push(meta.reference);
+  const metaNotes = noteParts.join(" | ");
+
+  // If merchant name exists, use it directly
+  if (merchantName) {
+    return { payee: merchantName, notes: metaNotes || t.description };
+  }
+
+  // Strip meta fields from description to get a clean payee name.
+  // BNZ format: [payee] [particulars] [code] [reference] — strip as a suffix.
+  let cleanPayee = t.description;
+  if (meta) {
+    const suffixParts: string[] = [];
+    if (meta.particulars) suffixParts.push(meta.particulars);
+    if (meta.code) suffixParts.push(meta.code);
+    if (meta.reference) suffixParts.push(meta.reference);
+    const suffix = suffixParts.join(" ");
+    if (suffix && cleanPayee.endsWith(suffix)) {
+      cleanPayee = cleanPayee.slice(0, -suffix.length).trim();
+    }
+  }
+
+  // If stripping left nothing useful, fall back to original description
+  if (!cleanPayee) {
+    cleanPayee = t.description;
+  }
+
+  return { payee: cleanPayee, notes: metaNotes || t.description };
+}
+
 export function getOtherAccount(t: Transaction): string | undefined {
   if ("meta" in t && t.meta?.other_account) {
     return t.meta.other_account;
@@ -71,9 +119,17 @@ export function getOtherAccount(t: Transaction): string | undefined {
   return undefined;
 }
 
+export function getCardSuffix(t: Transaction): string | undefined {
+  if ("meta" in t && t.meta?.card_suffix) {
+    return t.meta.card_suffix;
+  }
+  return undefined;
+}
+
 // Map of formatted bank account number → Actual Budget transfer payee ID
 export interface TransferLookup {
   bankNumberToActualId: Map<string, string>;
+  cardSuffixToActualId: Map<string, string>;
   actualIdToTransferPayeeId: Map<string, string>;
 }
 
@@ -91,7 +147,6 @@ export function mapTransaction(
   notes?: string;
   cleared: boolean;
 } {
-  const merchantName = getMerchantName(t);
   const otherAccount = getOtherAccount(t);
 
   // Check if other_account matches a mapped account → treat as transfer
@@ -100,6 +155,18 @@ export function mapTransaction(
     const targetActualId = transferLookup.bankNumberToActualId.get(otherAccount);
     if (targetActualId) {
       transferPayeeId = transferLookup.actualIdToTransferPayeeId.get(targetActualId);
+    }
+  }
+
+  // Fallback: ANZ transfers use meta.card_suffix instead of other_account.
+  // Match card suffix to another mapped account (exclude self-matches).
+  if (!transferPayeeId) {
+    const cardSuffix = getCardSuffix(t);
+    if (cardSuffix) {
+      const targetActualId = transferLookup.cardSuffixToActualId.get(cardSuffix);
+      if (targetActualId && targetActualId !== actualAccountId) {
+        transferPayeeId = transferLookup.actualIdToTransferPayeeId.get(targetActualId);
+      }
     }
   }
 
@@ -115,13 +182,14 @@ export function mapTransaction(
     };
   }
 
+  const { payee, notes } = getPayeeAndNotes(t);
   return {
     account: actualAccountId,
     date: toLocalDateStr(t.date),
     amount: Math.round(t.amount * 100),
     imported_id: t._id,
-    payee_name: merchantName ?? t.description,
-    notes: merchantName ? t.description : undefined,
+    payee_name: payee,
+    notes,
     cleared: true,
   };
 }
@@ -172,10 +240,17 @@ async function buildTransferLookup(
 ): Promise<TransferLookup> {
   // Build bank account number → Actual account ID
   const bankNumberToActualId = new Map<string, string>();
+  // Build card suffix (last 4 digits) → Actual account ID for ANZ-style transfers
+  const cardSuffixToActualId = new Map<string, string>();
   for (const mapping of config.accountMappings) {
     const akahuAccount = akahuAccounts.find((a) => a._id === mapping.akahuAccountId);
     if (akahuAccount?.formatted_account) {
       bankNumberToActualId.set(akahuAccount.formatted_account, mapping.actualAccountId);
+      // Extract last 4 digits as card suffix for credit card matching
+      const digits = akahuAccount.formatted_account.replace(/\D/g, "");
+      if (digits.length >= 4) {
+        cardSuffixToActualId.set(digits.slice(-4), mapping.actualAccountId);
+      }
     }
   }
 
@@ -188,7 +263,7 @@ async function buildTransferLookup(
     }
   }
 
-  return { bankNumberToActualId, actualIdToTransferPayeeId };
+  return { bankNumberToActualId, cardSuffixToActualId, actualIdToTransferPayeeId };
 }
 
 async function syncAccount(
@@ -200,6 +275,7 @@ async function syncAccount(
   akahuBalance: number | undefined,
   cleanupManual = false,
   startDateOverride?: string,
+  refreshPayees = false,
 ): Promise<AccountSyncResult> {
   const startDateStr =
     startDateOverride ??
@@ -298,6 +374,36 @@ async function syncAccount(
     }
 
     const result = await api.importTransactions(mapping.actualAccountId, filteredTransactions);
+
+    // Refresh payees on existing transactions if enabled
+    let payeesUpdated = 0;
+    if (refreshPayees) {
+      const payeeList = await api.getPayees();
+      const payeeIdToName = new Map(payeeList.map((p) => [p.id, p.name]));
+      const payeeNameToId = new Map(payeeList.map((p) => [p.name, p.id]));
+
+      for (const mapped of actualTransactions) {
+        if (!mapped.imported_id || mapped.payee) continue; // skip transfers
+        const existing = existingActualTxns.find((t) => t.imported_id === mapped.imported_id);
+        if (!existing || !mapped.payee_name) continue;
+
+        const existingPayeeName = existing.payee ? payeeIdToName.get(existing.payee) : undefined;
+        if (existingPayeeName !== mapped.payee_name) {
+          let newPayeeId = payeeNameToId.get(mapped.payee_name);
+          if (!newPayeeId) {
+            newPayeeId = await api.createPayee({ name: mapped.payee_name });
+            payeeNameToId.set(mapped.payee_name, newPayeeId);
+          }
+          await api.updateTransaction(existing.id, { payee: newPayeeId });
+          payeesUpdated++;
+        }
+      }
+      if (payeesUpdated > 0) {
+        console.log(
+          `[sync] Refreshed ${payeesUpdated} payee names for ${mapping.akahuAccountName}`,
+        );
+      }
+    }
 
     // Update starting balance from Akahu transactions (excluding deduped transfers)
     const balanceImportedId = `aktualsync-starting-balance-${mapping.akahuAccountId}`;
@@ -431,6 +537,7 @@ export async function runSync(
   trigger: "manual" | "scheduled" = "manual",
   cleanupManual = false,
   startDate?: string,
+  refreshPayees = false,
 ): Promise<SyncHistoryEntry> {
   if (isSyncing) {
     throw new Error("Sync is already running");
@@ -483,6 +590,7 @@ export async function runSync(
         akahuAccount?.balance?.current,
         cleanupManual,
         startDate,
+        refreshPayees,
       );
       results.push(result);
       console.log(
@@ -511,6 +619,93 @@ export async function runSync(
             `[sync] Post-sync cleanup: removed duplicate on ${mapping.actualAccountName}: ` +
               `$${(duplicate.amount / 100).toFixed(2)} on ${duplicate.date} (kept transfer)`,
           );
+        }
+      }
+    }
+
+    // Post-sync validation: compare Actual balances against Akahu
+    for (const mapping of enabledMappings) {
+      const akahuAccount = akahuAccounts.find((a) => a._id === mapping.akahuAccountId);
+      if (akahuAccount?.balance?.current == null) continue;
+
+      const akahuBalanceCents = Math.round(akahuAccount.balance.current * 100);
+      const allTxns = await api.getTransactions(mapping.actualAccountId, "2000-01-01", today);
+      const actualBalanceCents = allTxns.reduce((sum, t) => sum + t.amount, 0);
+      const diffCents = actualBalanceCents - akahuBalanceCents;
+      const matched = diffCents === 0;
+
+      const diagnosis: string[] = [];
+      if (!matched) {
+        // Categorize transactions
+        const startingBalTxn = allTxns.find((t) =>
+          t.imported_id?.startsWith("aktualsync-starting-balance"),
+        );
+        const importedTxns = allTxns.filter(
+          (t) => t.imported_id && !t.imported_id.startsWith("aktualsync-starting-balance"),
+        );
+        const transferTxns = allTxns.filter((t) => t.transfer_id && !t.imported_id);
+        const manualTxns = allTxns.filter((t) => !t.imported_id && !t.transfer_id);
+
+        diagnosis.push(
+          `${importedTxns.length} imported, ${transferTxns.length} transfer counterparts, ${manualTxns.length} manual`,
+        );
+
+        if (startingBalTxn) {
+          diagnosis.push(
+            `Starting balance: $${(startingBalTxn.amount / 100).toFixed(2)} on ${startingBalTxn.date}`,
+          );
+        } else {
+          diagnosis.push("No starting balance transaction found");
+        }
+
+        if (manualTxns.length > 0) {
+          const manualSum = manualTxns.reduce((s, t) => s + t.amount, 0);
+          diagnosis.push(
+            `Manual transactions total: $${(manualSum / 100).toFixed(2)} (${manualTxns.length} txns)`,
+          );
+        }
+
+        if (transferTxns.length > 0) {
+          const transferSum = transferTxns.reduce((s, t) => s + t.amount, 0);
+          diagnosis.push(
+            `Transfer counterparts total: $${(transferSum / 100).toFixed(2)} (${transferTxns.length} txns)`,
+          );
+        }
+
+        // Check for duplicate imported_ids
+        const importedIds = importedTxns.map((t) => t.imported_id).filter(Boolean);
+        const seen = new Set<string>();
+        const dupes = new Set<string>();
+        for (const id of importedIds) {
+          if (seen.has(id!)) dupes.add(id!);
+          seen.add(id!);
+        }
+        if (dupes.size > 0) {
+          diagnosis.push(`${dupes.size} duplicate imported_id(s) found`);
+        }
+      }
+
+      const validation = { akahuBalanceCents, actualBalanceCents, diffCents, matched, diagnosis };
+
+      // Attach to the matching result
+      const resultEntry = results.find((r) => r.actualAccountName === mapping.actualAccountName);
+      if (resultEntry) {
+        resultEntry.balanceValidation = validation;
+      }
+
+      if (matched) {
+        console.log(
+          `[sync] ✅ ${mapping.actualAccountName}: balance matches Akahu ($${(akahuBalanceCents / 100).toFixed(2)})`,
+        );
+      } else {
+        console.log(
+          `[sync] ⚠️ Balance mismatch for ${mapping.actualAccountName}: ` +
+            `Actual=$${(actualBalanceCents / 100).toFixed(2)}, ` +
+            `Akahu=$${(akahuBalanceCents / 100).toFixed(2)}, ` +
+            `diff=$${(diffCents / 100).toFixed(2)}`,
+        );
+        for (const line of diagnosis) {
+          console.log(`[sync]   ${line}`);
         }
       }
     }
