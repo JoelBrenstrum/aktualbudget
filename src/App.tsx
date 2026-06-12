@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
+import { Download } from "lucide-react";
 import { ConnectionSettings } from "./components/ConnectionSettings";
 import { AccountMapping } from "./components/AccountMapping";
 import { SyncControl } from "./components/SyncControl";
+import { UnlockDialog } from "./components/UnlockDialog";
 
 export interface ActualAccount {
   id: string;
@@ -67,15 +70,38 @@ export interface AppConfig {
   syncHistory: SyncHistoryEntry[];
 }
 
+interface ServerStatus {
+  locked: boolean;
+  configured: boolean;
+}
+
 function App() {
+  const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [actualAccounts, setActualAccounts] = useState<ActualAccount[]>([]);
   const [akahuAccounts, setAkahuAccounts] = useState<AkahuAccount[]>([]);
   const [activeTab, setActiveTab] = useState("connections");
 
+  const checkStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/status");
+      const data = (await res.json()) as ServerStatus;
+      setStatus(data);
+      return data;
+    } catch {
+      toast.error("Cannot connect to server");
+      return null;
+    }
+  }, []);
+
   const loadConfig = useCallback(async () => {
     try {
       const res = await fetch("/api/config");
+      if (res.status === 423) {
+        setStatus({ locked: true, configured: true });
+        setConfig(null);
+        return;
+      }
       const data = await res.json();
       setConfig(data);
       if (data.cachedActualAccounts?.length) setActualAccounts(data.cachedActualAccounts);
@@ -86,8 +112,13 @@ function App() {
   }, []);
 
   useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
+    checkStatus();
+  }, [checkStatus]);
+
+  const handleUnlocked = async () => {
+    setStatus({ locked: false, configured: true });
+    await loadConfig();
+  };
 
   const saveConfig = async (updates: Partial<AppConfig>) => {
     try {
@@ -96,6 +127,12 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
+      if (res.status === 423) {
+        setStatus({ locked: true, configured: true });
+        setConfig(null);
+        toast.error("Session expired — please unlock again");
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         // Update local config state so other tabs see changes immediately
@@ -109,11 +146,44 @@ function App() {
     }
   };
 
-  if (!config) {
+  const handleExport = async () => {
+    try {
+      const res = await fetch("/api/export");
+      if (res.status === 423) {
+        setStatus({ locked: true, configured: true });
+        setConfig(null);
+        return;
+      }
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "aktualbudget-config.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Config exported");
+    } catch {
+      toast.error("Export failed");
+    }
+  };
+
+  // Still loading status
+  if (!status) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="animate-pulse text-muted-foreground">Loading...</div>
       </div>
+    );
+  }
+
+  // Locked or not yet configured — show unlock dialog
+  if (status.locked || !config) {
+    return (
+      <>
+        <UnlockDialog configured={status.configured} onUnlocked={handleUnlocked} />
+        <Toaster richColors position="bottom-right" />
+      </>
     );
   }
 
@@ -122,12 +192,22 @@ function App() {
       <div className="mx-auto max-w-4xl px-6 py-10">
         <header className="mb-8 flex items-center gap-4">
           <img src="/logo.png" alt="Aktual Budget Sync" className="h-12 w-12 rounded-xl" />
-          <div>
+          <div className="flex-1">
             <h1 className="font-heading text-3xl font-semibold tracking-tight text-white">
               Aktual Budget Sync
             </h1>
             <p className="mt-1 text-white/70">Sync your Akahu bank feeds into Actual Budget</p>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground"
+            onClick={handleExport}
+            title="Export decrypted config"
+          >
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
         </header>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>

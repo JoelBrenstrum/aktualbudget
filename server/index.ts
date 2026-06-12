@@ -4,7 +4,19 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import api from "@actual-app/api";
-import { loadConfig, saveConfig, getDataDir, type AppConfig } from "./config.js";
+import {
+  loadConfig,
+  saveConfig,
+  getDataDir,
+  isLocked,
+  hasSecrets,
+  hasConfig,
+  unlock,
+  initializeSecrets,
+  exportFullConfig,
+  resetAll,
+  type AppConfig,
+} from "./config.js";
 import { fetchActualAccounts, fetchAkahuAccounts, runSync, getSyncStatus } from "./sync.js";
 import { initScheduler, startSchedule, stopSchedule } from "./scheduler.js";
 
@@ -34,7 +46,59 @@ app.use(express.json());
 const distPath = path.resolve(__dirname, "../dist");
 app.use(express.static(distPath));
 
-// --- API Routes ---
+// --- Unlock routes (no auth required) ---
+
+app.get("/api/status", (_req, res) => {
+  res.json({
+    locked: isLocked(),
+    configured: hasSecrets() || hasConfig(),
+  });
+});
+
+app.post("/api/unlock", (req, res) => {
+  const { password } = req.body as { password: string };
+  if (!password) {
+    return res.status(400).json({ error: "Password is required" });
+  }
+
+  try {
+    if (hasSecrets() || hasConfig()) {
+      unlock(password);
+    } else {
+      initializeSecrets(password);
+    }
+
+    // Start scheduler now that config is available
+    try {
+      initScheduler();
+    } catch {
+      // Scheduler init failure shouldn't block unlock
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(401).json({
+      error: error instanceof Error ? error.message : "Unlock failed",
+    });
+  }
+});
+
+app.post("/api/reset", (_req, res) => {
+  stopSchedule();
+  resetAll();
+  res.json({ success: true });
+});
+
+// --- Lock middleware (gates all other /api routes) ---
+
+app.use("/api", (_req, res, next) => {
+  if (isLocked()) {
+    return res.status(423).json({ error: "locked" });
+  }
+  next();
+});
+
+// --- Protected API Routes ---
 
 app.get("/api/config", (_req, res) => {
   const config = loadConfig();
@@ -68,6 +132,13 @@ app.post("/api/config", (req, res) => {
 
   saveConfig(current);
   res.json({ success: true });
+});
+
+app.get("/api/export", (_req, res) => {
+  const config = exportFullConfig();
+  res.setHeader("Content-Disposition", "attachment; filename=aktualbudget-config.json");
+  res.setHeader("Content-Type", "application/json");
+  res.json(config);
 });
 
 app.post("/api/actual/test", async (req, res) => {
@@ -238,7 +309,7 @@ app.get("/{*path}", (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[server] Running on http://localhost:${PORT}`);
-  initScheduler();
+  // Scheduler starts after unlock, not on boot
 });
 
 // Prevent @actual-app/api internal errors from crashing the server
