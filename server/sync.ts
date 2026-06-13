@@ -1,6 +1,6 @@
 import api from "@actual-app/api";
 import { AkahuClient } from "akahu";
-import type { Account, Transaction } from "akahu";
+import type { Account, PendingTransaction, Transaction } from "akahu";
 import {
   type AccountMapping,
   type AccountSyncResult,
@@ -52,9 +52,21 @@ export async function fetchActualAccounts(config: AppConfig) {
   }
 }
 
+// Akahu returns dates in UTC. Convert to NZ time explicitly,
+// matching the official Actual Budget Akahu integration.
+const dateFormatNZ = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Pacific/Auckland",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
 export function toLocalDateStr(isoDate: string): string {
-  const d = new Date(isoDate);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const parts = dateFormatNZ.formatToParts(new Date(isoDate));
+  const month = parts.find((p) => p.type === "month")!.value;
+  const day = parts.find((p) => p.type === "day")!.value;
+  const year = parts.find((p) => p.type === "year")!.value;
+  return `${year}-${month}-${day}`;
 }
 
 export function getMerchantName(t: Transaction): string | undefined {
@@ -306,6 +318,22 @@ async function syncAccount(
       cursor = page.cursor.next;
     } while (cursor);
 
+    // Fetch pending transactions (not yet settled by the bank).
+    // These are imported with cleared=false and no imported_id,
+    // matching the official Actual Budget Akahu integration.
+    let pendingTransactions: PendingTransaction[] = [];
+    try {
+      pendingTransactions = await client.accounts.listPendingTransactions(
+        userToken,
+        mapping.akahuAccountId,
+      );
+    } catch (e) {
+      console.log(
+        `[sync] Could not fetch pending transactions for ${mapping.akahuAccountName}:`,
+        e,
+      );
+    }
+
     // Log transaction types for debugging
     const typeCounts = new Map<string, number>();
     for (const t of allTransactions) {
@@ -316,7 +344,7 @@ async function syncAccount(
       Object.fromEntries(typeCounts),
     );
 
-    // Transform to Actual Budget format
+    // Transform settled transactions to Actual Budget format
     let transferCount = 0;
     const actualTransactions = allTransactions.map((t) => {
       const mapped = mapTransaction(t, mapping.actualAccountId, transferLookup);
@@ -337,8 +365,23 @@ async function syncAccount(
       return mapped;
     });
 
+    // Transform pending transactions — no imported_id (IDs are unstable
+    // until settled), cleared=false. Actual's fuzzy matching will link
+    // them to the settled version when it arrives.
+    const pendingMapped = pendingTransactions.map((t) => {
+      const { payee, notes } = getPayeeAndNotes(t as unknown as Transaction);
+      return {
+        account: mapping.actualAccountId,
+        date: toLocalDateStr(t.date),
+        amount: Math.round(t.amount * 100),
+        payee_name: payee,
+        notes,
+        cleared: false,
+      };
+    });
+
     console.log(
-      `[sync] ${mapping.akahuAccountName}: ${allTransactions.length} txns, ${transferCount} mapped as transfers`,
+      `[sync] ${mapping.akahuAccountName}: ${allTransactions.length} settled, ${pendingTransactions.length} pending, ${transferCount} transfers`,
     );
 
     // Deduplicate: filter out Akahu transactions that match existing transfers in Actual.
@@ -373,7 +416,10 @@ async function syncAccount(
       console.log(`[sync] ${mapping.akahuAccountName}: filtered ${deduped} duplicate transfer(s)`);
     }
 
-    const result = await api.importTransactions(mapping.actualAccountId, filteredTransactions);
+    const result = await api.importTransactions(mapping.actualAccountId, [
+      ...filteredTransactions,
+      ...pendingMapped,
+    ]);
 
     // Refresh payees on existing transactions if enabled
     let payeesUpdated = 0;
@@ -417,19 +463,10 @@ async function syncAccount(
         transactionSum,
       );
 
-      // Find oldest date from ALL Akahu transactions (not just filtered),
-      // because deduped transfers still represent real transactions that
-      // the starting balance must precede.
-      const allDates = [
-        ...actualTransactions.map((t) => t.date),
-        ...existingTransfers.map((t) => t.date),
-      ];
-      const balanceDateStr =
-        allDates.length > 0
-          ? getStartingBalanceDate(
-              allDates.reduce((oldest, d) => (d < oldest ? d : oldest), allDates[0]),
-            )
-          : today;
+      // Starting balance date = 1 day before the sync start date.
+      // This anchors to the requested sync range rather than the oldest
+      // transaction found, which may be later if the start date has no txns.
+      const balanceDateStr = getStartingBalanceDate(startDateStr);
 
       console.log(
         `[sync] Starting balance calc for ${mapping.akahuAccountName}: ` +
@@ -551,12 +588,27 @@ export async function runSync(
   const client = createAkahuClient(config.akahu.appToken);
 
   try {
-    // Trigger Akahu to refresh bank data before syncing
+    // Trigger Akahu to refresh bank data and wait for completion.
+    // Without polling, we fetch stale data before banks respond.
     await client.accounts.refreshAll(config.akahu.userToken);
-    console.log("[sync] Triggered Akahu account refresh");
+    console.log("[sync] Triggered Akahu account refresh, waiting for completion...");
 
-    // Fetch Akahu accounts for transfer matching
-    const akahuAccounts = await client.accounts.list(config.akahu.userToken);
+    let akahuAccounts = await client.accounts.list(config.akahu.userToken);
+    const needsRefresh = (refreshedAt?: string) => {
+      if (!refreshedAt) return false;
+      return Date.now() - Date.parse(refreshedAt) > 60 * 60 * 1000;
+    };
+    const anyStale = () =>
+      akahuAccounts.some((a) => needsRefresh(a.refreshed?.transactions as string | undefined));
+
+    for (let i = 0; i < 5 && anyStale(); i++) {
+      console.log(`[sync] Waiting for refresh (attempt ${i + 1}/5)...`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      akahuAccounts = await client.accounts.list(config.akahu.userToken);
+    }
+    // Extra settle time for transactions to propagate
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    console.log("[sync] Refresh complete");
 
     await api.init({
       dataDir,
