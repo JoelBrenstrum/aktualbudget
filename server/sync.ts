@@ -454,10 +454,11 @@ async function syncAccount(
     // Update starting balance from Akahu transactions (excluding deduped transfers)
     const balanceImportedId = `aktualsync-starting-balance-${mapping.akahuAccountId}`;
     if (akahuBalance != null) {
-      // Sum imported txns + existing transfer counterparts (which we skipped importing)
+      // Sum imported txns + pending + existing transfer counterparts (which we skipped importing)
       const importedSum = filteredTransactions.reduce((sum, t) => sum + (t.amount ?? 0), 0);
+      const pendingSum = pendingMapped.reduce((sum, t) => sum + (t.amount ?? 0), 0);
       const transferSum = existingTransfers.reduce((sum, t) => sum + t.amount, 0);
-      const transactionSum = importedSum + transferSum;
+      const transactionSum = importedSum + pendingSum + transferSum;
       const startingBalance = calculateStartingBalance(
         Math.round(akahuBalance * 100),
         transactionSum,
@@ -471,8 +472,8 @@ async function syncAccount(
       console.log(
         `[sync] Starting balance calc for ${mapping.akahuAccountName}: ` +
           `akahuBalance=$${akahuBalance.toFixed(2)}, importedSum=$${(importedSum / 100).toFixed(2)}, ` +
-          `transferSum=$${(transferSum / 100).toFixed(2)}, ` +
-          `startingBalance=$${(startingBalance / 100).toFixed(2)}, txnCount=${filteredTransactions.length}+${existingTransfers.length}`,
+          `pendingSum=$${(pendingSum / 100).toFixed(2)}, transferSum=$${(transferSum / 100).toFixed(2)}, ` +
+          `startingBalance=$${(startingBalance / 100).toFixed(2)}, txnCount=${filteredTransactions.length}+${pendingMapped.length}p+${existingTransfers.length}t`,
       );
 
       // Check if starting balance transaction already exists
@@ -696,10 +697,11 @@ export async function runSync(
           (t) => t.imported_id && !t.imported_id.startsWith("aktualsync-starting-balance"),
         );
         const transferTxns = allTxns.filter((t) => t.transfer_id && !t.imported_id);
-        const manualTxns = allTxns.filter((t) => !t.imported_id && !t.transfer_id);
+        const pendingTxns = allTxns.filter((t) => !t.imported_id && !t.transfer_id && !t.cleared);
+        const manualTxns = allTxns.filter((t) => !t.imported_id && !t.transfer_id && t.cleared);
 
         diagnosis.push(
-          `${importedTxns.length} imported, ${transferTxns.length} transfer counterparts, ${manualTxns.length} manual`,
+          `${importedTxns.length} imported, ${pendingTxns.length} pending, ${transferTxns.length} transfer counterparts, ${manualTxns.length} manual`,
         );
 
         if (startingBalTxn) {
@@ -708,6 +710,13 @@ export async function runSync(
           );
         } else {
           diagnosis.push("No starting balance transaction found");
+        }
+
+        if (pendingTxns.length > 0) {
+          const pendingSum = pendingTxns.reduce((s, t) => s + t.amount, 0);
+          diagnosis.push(
+            `Pending transactions total: $${(pendingSum / 100).toFixed(2)} (${pendingTxns.length} txns)`,
+          );
         }
 
         if (manualTxns.length > 0) {

@@ -309,7 +309,22 @@ app.get("/{*path}", (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`[server] Running on http://localhost:${PORT}`);
-  // Scheduler starts after unlock, not on boot
+
+  // Auto-unlock from env var so cron survives Docker restarts
+  const envPassword = process.env.ENCRYPTION_PASSWORD;
+  if (envPassword && isLocked() && (hasSecrets() || hasConfig())) {
+    try {
+      unlock(envPassword);
+      console.log("[server] Auto-unlocked from ENCRYPTION_PASSWORD env var");
+      try {
+        initScheduler();
+      } catch {
+        // Scheduler init failure shouldn't block startup
+      }
+    } catch (err) {
+      console.error("[server] Auto-unlock failed:", err instanceof Error ? err.message : err);
+    }
+  }
 });
 
 // Prevent @actual-app/api internal errors from crashing the server
