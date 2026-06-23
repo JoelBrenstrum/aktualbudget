@@ -8,6 +8,7 @@ import { ConnectionSettings } from "./components/ConnectionSettings";
 import { AccountMapping } from "./components/AccountMapping";
 import { SyncControl } from "./components/SyncControl";
 import { UnlockDialog } from "./components/UnlockDialog";
+import { DevTools } from "./components/DevTools";
 
 export interface ActualAccount {
   id: string;
@@ -215,6 +216,7 @@ function App() {
             <TabsTrigger value="connections">Connections</TabsTrigger>
             <TabsTrigger value="accounts">Account Mapping</TabsTrigger>
             <TabsTrigger value="sync">Sync</TabsTrigger>
+            <TabsTrigger value="dev">Dev</TabsTrigger>
           </TabsList>
 
           <TabsContent value="connections">
@@ -241,6 +243,10 @@ function App() {
 
           <TabsContent value="sync">
             <SyncControl config={config} onSave={saveConfig} onRefresh={loadConfig} />
+          </TabsContent>
+
+          <TabsContent value="dev">
+            <DevTools akahuAccounts={akahuAccounts} />
           </TabsContent>
         </Tabs>
       </div>

@@ -366,19 +366,16 @@ async function syncAccount(
     });
 
     // Transform pending transactions — no imported_id (IDs are unstable
-    // until settled), cleared=false. Actual's fuzzy matching will link
-    // them to the settled version when it arrives.
-    const pendingMapped = pendingTransactions.map((t) => {
-      const { payee, notes } = getPayeeAndNotes(t as unknown as Transaction);
-      return {
-        account: mapping.actualAccountId,
-        date: toLocalDateStr(t.date),
-        amount: Math.round(t.amount * 100),
-        payee_name: payee,
-        notes,
-        cleared: false,
-      };
-    });
+    // until settled), cleared=false. No payee_name is set because pending
+    // transactions lack merchant info and would create ugly payee entities.
+    // The payee gets set when the settled version arrives (see below).
+    const pendingMapped = pendingTransactions.map((t) => ({
+      account: mapping.actualAccountId,
+      date: toLocalDateStr(t.date),
+      amount: Math.round(t.amount * 100),
+      notes: t.description,
+      cleared: false,
+    }));
 
     console.log(
       `[sync] ${mapping.akahuAccountName}: ${allTransactions.length} settled, ${pendingTransactions.length} pending, ${transferCount} transfers`,
@@ -416,10 +413,53 @@ async function syncAccount(
       console.log(`[sync] ${mapping.akahuAccountName}: filtered ${deduped} duplicate transfer(s)`);
     }
 
+    // Snapshot pending transactions before import so we can detect pending→settled transitions
+    const pendingBeforeImport = existingActualTxns.filter(
+      (t) => !t.cleared && !t.imported_id && !t.transfer_id,
+    );
+
     const result = await api.importTransactions(mapping.actualAccountId, [
       ...filteredTransactions,
       ...pendingMapped,
     ]);
+
+    // Auto-update payees on pending→settled transitions.
+    // When Actual merges a pending transaction with a settled one, it keeps
+    // the old (missing/ugly) payee. We detect these merges and set the payee
+    // from the settled transaction's merchant/clean name.
+    let pendingPayeesUpdated = 0;
+    if (pendingBeforeImport.length > 0) {
+      const postImportTxns = await api.getTransactions(
+        mapping.actualAccountId,
+        "2000-01-01",
+        today,
+      );
+      const payeeList = await api.getPayees();
+      const payeeNameToId = new Map(payeeList.map((p) => [p.name, p.id]));
+
+      for (const prev of pendingBeforeImport) {
+        const current = postImportTxns.find((t) => t.id === prev.id);
+        if (!current?.imported_id) continue; // still pending
+
+        // Find the settled transaction from our batch that matched
+        const settled = actualTransactions.find((t) => t.imported_id === current.imported_id);
+        if (!settled?.payee_name) continue;
+
+        let payeeId = payeeNameToId.get(settled.payee_name);
+        if (!payeeId) {
+          payeeId = await api.createPayee({ name: settled.payee_name });
+          payeeNameToId.set(settled.payee_name, payeeId);
+        }
+        await api.updateTransaction(current.id, { payee: payeeId });
+        pendingPayeesUpdated++;
+      }
+
+      if (pendingPayeesUpdated > 0) {
+        console.log(
+          `[sync] Updated ${pendingPayeesUpdated} payee(s) from pending→settled for ${mapping.akahuAccountName}`,
+        );
+      }
+    }
 
     // Refresh payees on existing transactions if enabled
     let payeesUpdated = 0;

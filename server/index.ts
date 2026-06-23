@@ -302,6 +302,69 @@ app.post("/api/actual/create-account", async (req, res) => {
   }
 });
 
+// Dev: fetch raw Akahu transactions for inspection
+app.post("/api/dev/akahu-transactions", async (req, res) => {
+  const { accountId, start } = req.body as { accountId: string; start: string };
+  if (!accountId || !start) {
+    return res.status(400).json({ error: "accountId and start are required" });
+  }
+  const config = loadConfig();
+  try {
+    const { AkahuClient } = await import("akahu");
+    const { getPayeeAndNotes, getMerchantName, toLocalDateStr } = await import("./sync.js");
+    const client = new AkahuClient({ appToken: config.akahu.appToken });
+    const allTransactions: unknown[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const page = await client.accounts.listTransactions(config.akahu.userToken, accountId, {
+        start,
+        cursor: cursor ?? undefined,
+      });
+      allTransactions.push(...page.items);
+      cursor = page.cursor.next;
+    } while (cursor);
+
+    // Fetch pending transactions too
+    let pendingTransactions: unknown[] = [];
+    try {
+      pendingTransactions = await client.accounts.listPendingTransactions(
+        config.akahu.userToken,
+        accountId,
+      );
+    } catch {
+      // Some accounts don't support pending
+    }
+
+    // Augment each transaction with the computed payee/notes
+    const augment = (t: any, pending: boolean) => {
+      const { payee, notes } = getPayeeAndNotes(t);
+      return {
+        raw: t,
+        pending,
+        computed: {
+          payee,
+          notes,
+          merchantName: getMerchantName(t) ?? null,
+          date: toLocalDateStr(t.date),
+          amount: t.amount,
+        },
+      };
+    };
+
+    const augmented = [
+      ...allTransactions.map((t: any) => augment(t, false)),
+      ...pendingTransactions.map((t: any) => augment(t, true)),
+    ].sort((a, b) => b.computed.date.localeCompare(a.computed.date));
+
+    res.json({ success: true, count: augmented.length, transactions: augmented });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 // SPA fallback
 app.get("/{*path}", (_req, res) => {
   res.sendFile(path.join(distPath, "index.html"));
