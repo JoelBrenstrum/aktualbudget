@@ -6,7 +6,9 @@ import {
   getOtherAccount,
   getCardSuffix,
   getPayeeAndNotes,
+  mergeMetaAccount,
   mapTransaction,
+  deduplicateTransfers,
   calculateStartingBalance,
   shouldUpdateStartingBalance,
   getStartingBalanceDate,
@@ -452,6 +454,198 @@ describe("mapTransaction", () => {
         expect(result.payee_name).toBe("Transfer to unknown card");
       });
     });
+
+    describe("split meta account merge", () => {
+      const mergeLookup: TransferLookup = {
+        bankNumberToActualId: new Map([
+          ["38-1234-5678901-23", "actual-savings"],
+          ["41-5678-9012345-67", "actual-freedom"],
+        ]),
+        cardSuffixToActualId: new Map(),
+        actualIdToTransferPayeeId: new Map([
+          ["actual-savings", "payee-transfer-savings"],
+          ["actual-freedom", "payee-transfer-freedom"],
+        ]),
+      };
+
+      it("detects transfer from split particulars+code with TO prefix", () => {
+        const t = rawTxn({
+          description: "Savings Transfer",
+          amount: -500,
+        });
+        (t as any).meta = {
+          particulars: "TO 38-1234- ",
+          code: "5678901-23",
+          reference: "Savings",
+        };
+
+        const result = mapTransaction(t, "actual-checking", mergeLookup);
+        expect(result.payee).toBe("payee-transfer-savings");
+        expect(result.payee_name).toBeUndefined();
+      });
+
+      it("detects transfer from split particulars+code with FROM prefix", () => {
+        const t = rawTxn({
+          description: "Transfer from Freedom",
+          amount: 200,
+        });
+        (t as any).meta = {
+          particulars: "FROM 41-5678-",
+          code: "9012345-67",
+        };
+
+        const result = mapTransaction(t, "actual-checking", mergeLookup);
+        expect(result.payee).toBe("payee-transfer-freedom");
+      });
+
+      it("does not self-match merged account", () => {
+        const t = rawTxn({ description: "Internal" });
+        (t as any).meta = {
+          particulars: "TO 38-1234- ",
+          code: "5678901-23",
+        };
+
+        const result = mapTransaction(t, "actual-savings", mergeLookup);
+        expect(result.payee).toBeUndefined();
+        expect(result.payee_name).toBeDefined();
+      });
+
+      it("falls back to payee_name when merged account not in mappings", () => {
+        const t = rawTxn({ description: "Unknown transfer" });
+        (t as any).meta = {
+          particulars: "TO 99-9999- ",
+          code: "9999999-00",
+        };
+
+        const result = mapTransaction(t, "actual-checking", mergeLookup);
+        expect(result.payee).toBeUndefined();
+        expect(result.payee_name).toBeDefined();
+      });
+
+      it("prefers other_account over merged meta account", () => {
+        const t = rawTxn({ description: "Transfer" });
+        (t as any).meta = {
+          other_account: "41-5678-9012345-67",
+          particulars: "TO 38-1234- ",
+          code: "5678901-23",
+        };
+
+        const result = mapTransaction(t, "actual-checking", mergeLookup);
+        // Should match via other_account (freedom), not merged (savings)
+        expect(result.payee).toBe("payee-transfer-freedom");
+      });
+    });
+  });
+});
+
+// --- mergeMetaAccount ---
+
+describe("mergeMetaAccount", () => {
+  it("merges particulars + code with TO prefix", () => {
+    const t = rawTxn();
+    (t as any).meta = { particulars: "TO 38-1234- ", code: "5678901-23" };
+    expect(mergeMetaAccount(t)).toBe("38-1234-5678901-23");
+  });
+
+  it("merges particulars + code with FROM prefix", () => {
+    const t = rawTxn();
+    (t as any).meta = { particulars: "FROM 41-5678-", code: "9012345-67" };
+    expect(mergeMetaAccount(t)).toBe("41-5678-9012345-67");
+  });
+
+  it("merges without prefix", () => {
+    const t = rawTxn();
+    (t as any).meta = { particulars: "55-7890-", code: "1234567-89" };
+    expect(mergeMetaAccount(t)).toBe("55-7890-1234567-89");
+  });
+
+  it("returns undefined when result is not a valid NZ account", () => {
+    const t = rawTxn();
+    (t as any).meta = { particulars: "Water", code: "INV99201" };
+    expect(mergeMetaAccount(t)).toBeUndefined();
+  });
+
+  it("returns undefined when particulars is missing", () => {
+    const t = rawTxn();
+    (t as any).meta = { code: "5678901-23" };
+    expect(mergeMetaAccount(t)).toBeUndefined();
+  });
+
+  it("returns undefined when code is missing", () => {
+    const t = rawTxn();
+    (t as any).meta = { particulars: "TO 38-1234- " };
+    expect(mergeMetaAccount(t)).toBeUndefined();
+  });
+
+  it("returns undefined for raw transaction without meta", () => {
+    expect(mergeMetaAccount(rawTxn())).toBeUndefined();
+  });
+});
+
+// --- deduplicateTransfers ---
+
+describe("deduplicateTransfers", () => {
+  it("filters out incoming transaction that matches an existing transfer", () => {
+    const incoming = [{ date: "2026-06-01", amount: -5000, payee_name: "Countdown" }];
+    const existing = [{ id: "t1", date: "2026-06-01", amount: -5000 }];
+    const { filtered, deduped } = deduplicateTransfers(incoming, existing);
+    expect(deduped).toBe(1);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it("only dedupes one incoming per existing transfer (bug fix)", () => {
+    // Two payments for $50 on the same day to different payees,
+    // but only one existing transfer — only one should be removed
+    const incoming = [
+      { date: "2026-06-01", amount: -5000, payee_name: "Countdown" },
+      { date: "2026-06-01", amount: -5000, payee_name: "New World" },
+    ];
+    const existing = [{ id: "t1", date: "2026-06-01", amount: -5000 }];
+    const { filtered, deduped } = deduplicateTransfers(incoming, existing);
+    expect(deduped).toBe(1);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].payee_name).toBe("New World");
+  });
+
+  it("dedupes two incoming when two existing transfers match", () => {
+    const incoming = [
+      { date: "2026-06-01", amount: -5000, payee_name: "Countdown" },
+      { date: "2026-06-01", amount: -5000, payee_name: "New World" },
+    ];
+    const existing = [
+      { id: "t1", date: "2026-06-01", amount: -5000 },
+      { id: "t2", date: "2026-06-01", amount: -5000 },
+    ];
+    const { filtered, deduped } = deduplicateTransfers(incoming, existing);
+    expect(deduped).toBe(2);
+    expect(filtered).toHaveLength(0);
+  });
+
+  it("always keeps transactions already mapped as transfers", () => {
+    const incoming = [{ date: "2026-06-01", amount: -5000, payee: "payee-transfer-savings" }];
+    const existing = [{ id: "t1", date: "2026-06-01", amount: -5000 }];
+    const { filtered, deduped } = deduplicateTransfers(incoming, existing);
+    expect(deduped).toBe(0);
+    expect(filtered).toHaveLength(1);
+  });
+
+  it("does not filter when no existing transfers match", () => {
+    const incoming = [
+      { date: "2026-06-01", amount: -5000, payee_name: "Countdown" },
+      { date: "2026-06-02", amount: -3000, payee_name: "Pak n Save" },
+    ];
+    const existing = [{ id: "t1", date: "2026-06-05", amount: -9999 }];
+    const { filtered, deduped } = deduplicateTransfers(incoming, existing);
+    expect(deduped).toBe(0);
+    expect(filtered).toHaveLength(2);
+  });
+
+  it("handles empty inputs", () => {
+    expect(deduplicateTransfers([], []).deduped).toBe(0);
+    expect(
+      deduplicateTransfers([], [{ id: "t1", date: "2026-06-01", amount: -5000 }]).deduped,
+    ).toBe(0);
+    expect(deduplicateTransfers([{ date: "2026-06-01", amount: -5000 }], []).deduped).toBe(0);
   });
 });
 

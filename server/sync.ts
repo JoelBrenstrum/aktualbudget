@@ -138,6 +138,32 @@ export function getCardSuffix(t: Transaction): string | undefined {
   return undefined;
 }
 
+// NZ bank account format: XX-XXXX-XXXXXXX-XX
+const NZ_ACCOUNT_RE = /^\d{2}-\d{4}-\d{7}-\d{2}$/;
+
+/**
+ * Try to reconstruct a bank account number from meta.particulars + meta.code.
+ *
+ * Some banks (e.g. ANZ) split the target account across two meta fields:
+ *   particulars: "TO 12-3072- "
+ *   code:        "0400082-51"
+ * Combined (after stripping prefix and whitespace): "12-3072-0400082-51"
+ */
+export function mergeMetaAccount(t: Transaction): string | undefined {
+  if (!("meta" in t) || !t.meta) return undefined;
+  const meta = t.meta as Record<string, string>;
+  const particulars = meta.particulars?.trim();
+  const code = meta.code?.trim();
+  if (!particulars || !code) return undefined;
+
+  // Strip common prefixes like "TO ", "FROM "
+  const stripped = particulars.replace(/^(?:TO|FROM)\s+/i, "");
+  const merged = (stripped + code).trim();
+  if (NZ_ACCOUNT_RE.test(merged)) return merged;
+
+  return undefined;
+}
+
 // Map of formatted bank account number → Actual Budget transfer payee ID
 export interface TransferLookup {
   bankNumberToActualId: Map<string, string>;
@@ -182,6 +208,18 @@ export function mapTransaction(
     }
   }
 
+  // Fallback: some banks split the account number across meta.particulars + meta.code.
+  // Only match if the merged account exists in our mapped accounts.
+  if (!transferPayeeId) {
+    const merged = mergeMetaAccount(t);
+    if (merged) {
+      const targetActualId = transferLookup.bankNumberToActualId.get(merged);
+      if (targetActualId && targetActualId !== actualAccountId) {
+        transferPayeeId = transferLookup.actualIdToTransferPayeeId.get(targetActualId);
+      }
+    }
+  }
+
   if (transferPayeeId) {
     return {
       account: actualAccountId,
@@ -204,6 +242,36 @@ export function mapTransaction(
     notes,
     cleared: true,
   };
+}
+
+/**
+ * Filter out incoming transactions that match existing transfers in Actual
+ * (by date + amount). Each existing transfer can only match one incoming
+ * transaction to avoid incorrectly deduping multiple payments for the same
+ * amount on the same day. Transactions already mapped as transfers (with a
+ * payee ID) are always kept.
+ */
+export function deduplicateTransfers<T extends { date: string; amount: number; payee?: string }>(
+  incoming: T[],
+  existingTransfers: { id: string; date: string; amount: number }[],
+): { filtered: T[]; deduped: number } {
+  let deduped = 0;
+  const matchedTransferIds = new Set<string>();
+  const filtered = incoming.filter((t) => {
+    // Already mapped as a transfer — always keep
+    if (t.payee) return true;
+
+    const match = existingTransfers.find(
+      (et) => !matchedTransferIds.has(et.id) && et.date === t.date && et.amount === t.amount,
+    );
+    if (match) {
+      matchedTransferIds.add(match.id);
+      deduped++;
+      return false;
+    }
+    return true;
+  });
+  return { filtered, deduped };
 }
 
 /**
@@ -392,22 +460,10 @@ async function syncAccount(
     );
     const existingTransfers = existingActualTxns.filter((t) => t.transfer_id && !t.imported_id);
 
-    let deduped = 0;
-    const filteredTransactions = actualTransactions.filter((t) => {
-      // Only check for duplicates on transactions that aren't already mapped as transfers
-      if (t.payee) return true;
-
-      const isDuplicate = existingTransfers.some(
-        (et) => et.date === t.date && et.amount === t.amount,
-      );
-      if (isDuplicate) {
-        deduped++;
-        console.log(
-          `[sync] Skipping duplicate transfer: ${t.payee_name} $${(t.amount / 100).toFixed(2)} on ${t.date}`,
-        );
-      }
-      return !isDuplicate;
-    });
+    const { filtered: filteredTransactions, deduped } = deduplicateTransfers(
+      actualTransactions,
+      existingTransfers,
+    );
 
     if (deduped > 0) {
       console.log(`[sync] ${mapping.akahuAccountName}: filtered ${deduped} duplicate transfer(s)`);
