@@ -1,19 +1,13 @@
 import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import type { AkahuAccount } from "../App";
+import type { ActualAccount, AkahuAccount } from "../App";
 
 interface ComputedPayee {
   payee: string;
@@ -26,15 +20,19 @@ interface ComputedPayee {
 interface AugmentedTransaction {
   raw: Record<string, unknown>;
   pending: boolean;
+  accountId: string;
   computed: ComputedPayee;
 }
 
 interface Props {
   akahuAccounts: AkahuAccount[];
+  actualAccounts: ActualAccount[];
 }
 
-export function DevTools({ akahuAccounts }: Props) {
-  const [accountId, setAccountId] = useState("");
+const ALL_ACCOUNTS = "__ALL__";
+
+export function DevTools({ akahuAccounts, actualAccounts }: Props) {
+  const [accountIds, setAccountIds] = useState<string[]>([]);
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
@@ -43,10 +41,82 @@ export function DevTools({ akahuAccounts }: Props) {
   const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState<AugmentedTransaction[]>([]);
   const [selected, setSelected] = useState<AugmentedTransaction | null>(null);
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
+  const [deleteFromDate, setDeleteFromDate] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  // Keep ALL mutually exclusive with individual account selections
+  const handleDeleteSelection = (next: string[]) => {
+    const hadAll = deleteIds.includes(ALL_ACCOUNTS);
+    const hasAll = next.includes(ALL_ACCOUNTS);
+    if (hasAll && !hadAll) {
+      setDeleteIds([ALL_ACCOUNTS]);
+    } else if (hasAll && next.length > 1) {
+      setDeleteIds(next.filter((v) => v !== ALL_ACCOUNTS));
+    } else {
+      setDeleteIds(next);
+    }
+  };
+
+  const deleteSelectionLabel = () => {
+    if (deleteIds.length === 0) return "Select account(s)…";
+    if (deleteIds.includes(ALL_ACCOUNTS)) return "ALL accounts";
+    const names = deleteIds.map((id) => actualAccounts.find((a) => a.id === id)?.name ?? id);
+    return names.length <= 2 ? names.join(", ") : `${names.length} accounts`;
+  };
+
+  const deleteTransactions = async () => {
+    const isAll = deleteIds.includes(ALL_ACCOUNTS);
+    const resolvedIds = isAll ? actualAccounts.map((a) => a.id) : deleteIds;
+    if (resolvedIds.length === 0) {
+      toast.error("Select at least one account");
+      return;
+    }
+    const targetLabel = isAll ? `ALL ${resolvedIds.length} accounts` : deleteSelectionLabel();
+    const scopeLabel = deleteFromDate
+      ? `Actual transactions dated ${deleteFromDate} or later`
+      : "ALL Actual transactions";
+    if (!window.confirm(`Delete ${scopeLabel} from ${targetLabel}?\n\nThis cannot be undone.`)) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/dev/delete-actual-transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountIds: resolvedIds,
+          from: deleteFromDate || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const total = (data.results as { deleted: number }[]).reduce(
+          (sum, r) => sum + r.deleted,
+          0,
+        );
+        toast.success(`Deleted ${total} transaction(s) from ${data.results.length} account(s)`);
+      } else {
+        toast.error(data.error || "Failed to delete");
+      }
+    } catch {
+      toast.error("Request failed");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const akahuAccountName = (id: string) => akahuAccounts.find((a) => a.id === id)?.name ?? id;
+
+  const akahuSelectionLabel = () => {
+    if (accountIds.length === 0) return "Select account(s)…";
+    const names = accountIds.map(akahuAccountName);
+    return names.length <= 2 ? names.join(", ") : `${names.length} accounts`;
+  };
 
   const fetchTransactions = async () => {
-    if (!accountId) {
-      toast.error("Select an account");
+    if (accountIds.length === 0) {
+      toast.error("Select at least one account");
       return;
     }
     setLoading(true);
@@ -56,7 +126,7 @@ export function DevTools({ akahuAccounts }: Props) {
       const res = await fetch("/api/dev/akahu-transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accountId, start: startDate }),
+        body: JSON.stringify({ accountIds, start: startDate }),
       });
       const data = await res.json();
       if (data.success) {
@@ -84,6 +154,8 @@ export function DevTools({ akahuAccounts }: Props) {
     return desc !== t.computed.payee;
   };
 
+  const multiAccount = new Set(transactions.map((t) => t.accountId)).size > 1;
+
   return (
     <div className="space-y-6">
       {/* Controls */}
@@ -97,10 +169,12 @@ export function DevTools({ akahuAccounts }: Props) {
         <CardContent>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <div className="flex-1 space-y-1.5">
-              <Label>Akahu Account</Label>
-              <Select value={accountId} onValueChange={(v) => v && setAccountId(v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select an account…" />
+              <Label>Akahu Accounts</Label>
+              <Select multiple value={accountIds} onValueChange={setAccountIds}>
+                <SelectTrigger className="w-full">
+                  <span className={accountIds.length ? "" : "text-muted-foreground"}>
+                    {akahuSelectionLabel()}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {akahuAccounts.map((a) => (
@@ -204,6 +278,7 @@ export function DevTools({ akahuAccounts }: Props) {
                 <thead className="sticky top-0 bg-card text-left text-xs text-muted-foreground">
                   <tr className="border-b">
                     <th className="px-4 py-2">Date</th>
+                    {multiAccount && <th className="px-4 py-2">Account</th>}
                     <th className="px-4 py-2">Description</th>
                     <th className="px-4 py-2">Status</th>
                     <th className="px-4 py-2">Import Payee</th>
@@ -223,6 +298,11 @@ export function DevTools({ akahuAccounts }: Props) {
                         <td className="whitespace-nowrap px-4 py-2 text-muted-foreground">
                           {t.computed.date}
                         </td>
+                        {multiAccount && (
+                          <td className="whitespace-nowrap px-4 py-2">
+                            {akahuAccountName(t.accountId)}
+                          </td>
+                        )}
                         <td className="px-4 py-2" title={desc}>
                           {desc}
                         </td>
@@ -283,7 +363,9 @@ export function DevTools({ akahuAccounts }: Props) {
                 ← Back
               </Button>
               <CardTitle className="text-base">Transaction Detail</CardTitle>
-              <span className="text-sm text-muted-foreground">{selected.computed.date}</span>
+              <span className="text-sm text-muted-foreground">
+                {selected.computed.date} · {akahuAccountName(selected.accountId)}
+              </span>
               {selected.pending && (
                 <Badge
                   variant="outline"
@@ -354,6 +436,61 @@ export function DevTools({ akahuAccounts }: Props) {
           </CardContent>
         </Card>
       )}
+
+      {/* Danger zone: wipe Actual transactions for faster full-sync test cycles */}
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle>Delete Actual Transactions</CardTitle>
+          <CardDescription>
+            Delete transactions from the selected Actual Budget account(s), optionally only those
+            dated on or after the from date — leave it empty to delete all. Useful for re-running
+            full sync tests from a clean slate. This cannot be undone.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-end gap-3">
+            <div className="flex-1 space-y-1.5">
+              <Label>Actual Accounts</Label>
+              <Select multiple value={deleteIds} onValueChange={handleDeleteSelection}>
+                <SelectTrigger className="w-full">
+                  <span className={deleteIds.length ? "" : "text-muted-foreground"}>
+                    {deleteSelectionLabel()}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_ACCOUNTS}>ALL accounts</SelectItem>
+                  {actualAccounts.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>
+                      {a.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-44 space-y-1.5">
+              <Label>From Date (optional)</Label>
+              <Input
+                type="date"
+                value={deleteFromDate}
+                onChange={(e) => setDeleteFromDate(e.target.value)}
+              />
+            </div>
+            <Button
+              variant="destructive"
+              onClick={deleteTransactions}
+              disabled={deleting || deleteIds.length === 0}
+              className="gap-2"
+            >
+              {deleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {deleting ? "Deleting…" : "Delete"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

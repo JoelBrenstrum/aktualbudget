@@ -21,8 +21,10 @@ Always run `npm test` and `npm run check` before committing.
   functions are exported at the top for unit testing; `syncAccount`/`runSync`
   orchestrate the pipeline.
 - `server/index.ts` — Express routes, static frontend serving, console tee to
-  `data/server.log`. Includes a dev endpoint `POST /api/dev/akahu-transactions`
-  that returns raw + computed views of Akahu transactions for debugging.
+  `data/server.log`. Includes dev endpoints `POST /api/dev/akahu-transactions`
+  (raw + computed views of Akahu transactions for one or more accounts) and
+  `POST /api/dev/delete-actual-transactions` (wipes Actual transactions for
+  selected accounts, optionally from a date, for clean-slate sync testing).
 - `server/config.ts` — config persistence. Plain config in `data/config.json`;
   secrets AES-encrypted at rest in `data/secrets.enc`, unlocked with a password
   (or `ENCRYPTION_PASSWORD` env var on startup).
@@ -54,10 +56,19 @@ Always run `npm test` and `npm run check` before committing.
   UTC date portion — that would shift every date back a day. `created_at`
   (when the record appeared in Akahu) can lag `date` (transaction date) by
   several days — settled records are backdated.
-- **Transfers** between mapped accounts are detected three ways, in priority
+- **Transfers** between mapped accounts are detected four ways, in priority
   order: `meta.other_account` bank number → `meta.card_suffix` (ANZ, excluding
-  self-match) → merged `meta.particulars + meta.code` (split account numbers).
+  self-match) → merged `meta.particulars + meta.code` (split account numbers,
+  only when particulars start with TO/FROM) → `meta.particulars` of the form
+  `TO CARD 1234` / `FROM CARD 1234` (BNZ payments to a credit card; looked up
+  via `cardSuffixToActualId`, excluding self-match).
   Detected transfers get `payee` = Actual transfer payee ID instead of `payee_name`.
+- **Transfer-like** (`looksLikeTransfer`) is a deliberately broader test used
+  only to gate the post-sync duplicate cleanup: anything above, plus split
+  account numbers with any non-digit prefix (e.g. `EX 12-3072-`, the receiving
+  leg), plus positive `type: "CREDIT CARD"` records (payments landing on a
+  card, which arrive with empty meta). Only the sending leg *creates* a
+  transfer; the other leg imports plain and must be reconciled away.
 - **BNZ descriptions** mash payee + particulars/code/reference together;
   `getPayeeAndNotes` strips the meta fields off as a suffix.
 
@@ -82,9 +93,13 @@ Always run `npm test` and `npm run check` before committing.
    several syncs. Cleanup is skipped entirely if the pending fetch failed.
 8. Optional payee refresh on existing txns; starting-balance create/update;
    optional manual-txn cleanup.
-9. Back in `runSync`: post-sync transfer-duplicate cleanup across accounts, then
-   balance validation against Akahu (`diagnosis` lines land in sync history +
-   server.log).
+9. Back in `runSync`: post-sync transfer-duplicate cleanup across accounts
+   (deletes an imported txn with the same date+amount as a transfer
+   counterpart, **only if** its Akahu `_id` was flagged by `looksLikeTransfer`
+   during this run — standing orders and direct debits that coincidentally
+   match are left alone), then balance validation against Akahu (`diagnosis`
+   lines land in sync history + server.log). Note the pre-import
+   `deduplicateTransfers` (step 4) is *not* gated this way.
 
 ## Actual Budget API behaviors that matter (verified in bundled loot-core)
 

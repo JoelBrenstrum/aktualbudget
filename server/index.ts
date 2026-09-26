@@ -306,43 +306,29 @@ app.post("/api/actual/create-account", async (req, res) => {
 
 // Dev: fetch raw Akahu transactions for inspection
 app.post("/api/dev/akahu-transactions", async (req, res) => {
-  const { accountId, start } = req.body as { accountId: string; start: string };
-  if (!accountId || !start) {
-    return res.status(400).json({ error: "accountId and start are required" });
+  const { accountId, accountIds, start } = req.body as {
+    accountId?: string;
+    accountIds?: string[];
+    start: string;
+  };
+  const ids =
+    Array.isArray(accountIds) && accountIds.length > 0 ? accountIds : accountId ? [accountId] : [];
+  if (ids.length === 0 || !start) {
+    return res.status(400).json({ error: "accountIds and start are required" });
   }
   const config = loadConfig();
   try {
     const { AkahuClient } = await import("akahu");
     const { getPayeeAndNotes, getMerchantName, toLocalDateStr } = await import("./sync.js");
     const client = new AkahuClient({ appToken: config.akahu.appToken });
-    const allTransactions: unknown[] = [];
-    let cursor: string | null | undefined;
-    do {
-      const page = await client.accounts.listTransactions(config.akahu.userToken, accountId, {
-        start,
-        cursor: cursor ?? undefined,
-      });
-      allTransactions.push(...page.items);
-      cursor = page.cursor.next;
-    } while (cursor);
-
-    // Fetch pending transactions too
-    let pendingTransactions: unknown[] = [];
-    try {
-      pendingTransactions = await client.accounts.listPendingTransactions(
-        config.akahu.userToken,
-        accountId,
-      );
-    } catch {
-      // Some accounts don't support pending
-    }
 
     // Augment each transaction with the computed payee/notes
-    const augment = (t: any, pending: boolean) => {
+    const augment = (t: any, pending: boolean, acctId: string) => {
       const { payee, notes } = getPayeeAndNotes(t);
       return {
         raw: t,
         pending,
+        accountId: acctId,
         computed: {
           payee,
           notes,
@@ -353,10 +339,40 @@ app.post("/api/dev/akahu-transactions", async (req, res) => {
       };
     };
 
-    const augmented = [
-      ...allTransactions.map((t: any) => augment(t, false)),
-      ...pendingTransactions.map((t: any) => augment(t, true)),
-    ].sort((a, b) => b.computed.date.localeCompare(a.computed.date));
+    const perAccount = await Promise.all(
+      ids.map(async (acctId) => {
+        const settled: unknown[] = [];
+        let cursor: string | null | undefined;
+        do {
+          const page = await client.accounts.listTransactions(config.akahu.userToken, acctId, {
+            start,
+            cursor: cursor ?? undefined,
+          });
+          settled.push(...page.items);
+          cursor = page.cursor.next;
+        } while (cursor);
+
+        // Fetch pending transactions too
+        let pending: unknown[] = [];
+        try {
+          pending = await client.accounts.listPendingTransactions(config.akahu.userToken, acctId);
+        } catch {
+          // Some accounts don't support pending
+        }
+
+        return [
+          ...settled.map((t: any) => augment(t, false, acctId)),
+          ...pending.map((t: any) => augment(t, true, acctId)),
+        ];
+      }),
+    );
+
+    const augmented = perAccount
+      .flat()
+      .sort(
+        (a, b) =>
+          b.computed.date.localeCompare(a.computed.date) || a.accountId.localeCompare(b.accountId),
+      );
 
     res.json({ success: true, count: augmented.length, transactions: augmented });
   } catch (error) {
@@ -364,6 +380,72 @@ app.post("/api/dev/akahu-transactions", async (req, res) => {
       success: false,
       error: error instanceof Error ? error.message : String(error),
     });
+  }
+});
+
+// Dev: delete Actual transactions for the selected accounts, optionally only
+// those dated on or after `from`. Speeds up dev cycles when re-running full sync tests.
+app.post("/api/dev/delete-actual-transactions", async (req, res) => {
+  const { accountIds, from } = req.body as { accountIds: string[]; from?: string };
+  if (!Array.isArray(accountIds) || accountIds.length === 0) {
+    return res.status(400).json({ error: "accountIds is required" });
+  }
+  if (from && !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+    return res.status(400).json({ error: "from must be a YYYY-MM-DD date" });
+  }
+
+  const config = loadConfig();
+  const dataDir = getDataDir();
+  const serverURL = config.actual.serverUrl.trim();
+  const normalizedUrl =
+    serverURL && !/^https?:\/\//i.test(serverURL) ? `https://${serverURL}` : serverURL;
+
+  try {
+    await api.init({
+      dataDir,
+      serverURL: normalizedUrl,
+      password: config.actual.password,
+    });
+    await api.downloadBudget(config.actual.syncId, {
+      password: config.actual.encryptionPassword || undefined,
+    });
+
+    const accounts = await api.getAccounts();
+    const idSet = new Set(accountIds);
+    const targets = accounts.filter((a: { id: string }) => idSet.has(a.id));
+
+    const results: { id: string; name: string; deleted: number }[] = [];
+    for (const acct of targets) {
+      // Wide date range to catch anything, including future-dated transactions
+      const txns = await api.getTransactions(acct.id, from || "2000-01-01", "9999-12-31");
+      let deleted = 0;
+      for (const t of txns) {
+        // Skip split children — deleting the parent removes them
+        if ((t as { is_child?: boolean }).is_child) continue;
+        try {
+          await api.deleteTransaction(t.id);
+          deleted++;
+        } catch {
+          // Transfer counterparts may already be gone (deleted with the other leg)
+        }
+      }
+      results.push({ id: acct.id, name: acct.name, deleted });
+      console.log(`[dev] Deleted ${deleted} transactions from ${acct.name}`);
+    }
+
+    await api.shutdown();
+    res.json({ success: true, results });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    try {
+      await api.shutdown();
+    } catch {
+      /* ignore */
+    }
   }
 });
 

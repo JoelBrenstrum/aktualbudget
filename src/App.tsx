@@ -246,7 +246,7 @@ function App() {
           </TabsContent>
 
           <TabsContent value="dev">
-            <DevTools akahuAccounts={akahuAccounts} />
+            <DevTools akahuAccounts={akahuAccounts} actualAccounts={actualAccounts} />
           </TabsContent>
         </Tabs>
       </div>
